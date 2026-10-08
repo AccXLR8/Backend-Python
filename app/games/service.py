@@ -20,7 +20,12 @@ from app.database.repositories import (
     ParticipantRepository,
     UserRepository,
 )
-from app.engine.adapter import ChainReactionEngineAdapter, EngineAdapter, FakeEngineAdapter
+from app.engine.adapter import (
+    ChainReactionPyEngineAdapter,
+    EngineAdapter,
+    EngineIllegalMoveError,
+    FakeEngineAdapter,
+)
 from app.engine.models import EngineGameState, EngineMove
 from app.games.clock import GameClockState
 from app.games.events import GameEvent
@@ -37,19 +42,13 @@ from app.games.manager import game_lock_manager
 from app.games.models import FinishReason, GameConfig, GameStatus, PlayerClock
 from app.utils.time import MonotonicClock
 
-try:  # pragma: no cover - optional dependency in unit tests
-    import chain_reaction as chain_reaction_module  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover
-    chain_reaction_module = None
-
-
 logger = logging.getLogger(__name__)
 
 
 class GameService:
     def __init__(self, engine_adapter: Optional[EngineAdapter] = None):
         settings = get_settings()
-        self.engine_adapter = engine_adapter or ChainReactionEngineAdapter(settings.engine_module)
+        self.engine_adapter = engine_adapter or ChainReactionPyEngineAdapter(settings.engine_module)
         self.monotonic_clock = MonotonicClock()
         self.settings = settings
 
@@ -206,10 +205,8 @@ class GameService:
 
             try:
                 result = await self.engine_adapter.apply_move(engine_state, player_slot, engine_move)
-            except Exception as exc:  # pragma: no cover - depends on engine runtime
-                if chain_reaction_module and isinstance(exc, chain_reaction_module.IllegalMoveError):
-                    raise IllegalMoveError(str(exc)) from exc
-                raise
+            except EngineIllegalMoveError as exc:  # pragma: no cover - depends on engine runtime
+                raise IllegalMoveError(str(exc)) from exc
 
             clock_state.stop(player_slot, now)
             next_player = (
@@ -336,7 +333,7 @@ def _build_game_service() -> GameService:
     settings = get_settings()
     try:
         import_module(settings.engine_module)
-        adapter: EngineAdapter = ChainReactionEngineAdapter(settings.engine_module)
+        adapter: EngineAdapter = ChainReactionPyEngineAdapter(settings.engine_module)
     except Exception as exc:  # pragma: no cover - defensive fallback
         logger.warning("Falling back to FakeEngineAdapter: %s", exc)
         adapter = FakeEngineAdapter()

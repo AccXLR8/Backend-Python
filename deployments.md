@@ -1,6 +1,6 @@
 # Deployment Guide
 
-This document summarizes everything required to run the Chain Reaction backend with the PyO3 engine bindings, whether locally, in containers, or in production.
+This document summarizes everything required to run the Chain Reaction backend with the pure-Python ChainReaction engine, whether locally, in containers, or in production.
 
 ---
 
@@ -9,7 +9,7 @@ This document summarizes everything required to run the Chain Reaction backend w
 | Requirement | Notes |
 | --- | --- |
 | **Python 3.11** | Only needed if you run outside Docker. |
-| **Rust toolchain** | Required once to compile the PyO3 bindings. Installed automatically in the Docker image via `rustup`. |
+| **Git** | Needed to install the ChainReaction Py Engine from the Backend-Python repo. |
 | **Docker (optional)** | Recommended path: build the provided `Dockerfile` and run the container. |
 | **PostgreSQL 14+** | All persistent game data lives here. Use `asyncpg` DSN. |
 | **Redis 6+** | Matchmaking queues, distributed locks, connection metadata. |
@@ -29,7 +29,7 @@ DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/chainreaction
 REDIS_URL=redis://redis:6379/0
 AZURE_STORAGE_CONNECTION_STRING=<connection-string>
 AZURE_BLOB_CONTAINER=replays
-ENGINE_MODULE=chain_reaction
+ENGINE_MODULE=chainreaction_py
 ALLOWED_ORIGINS=["https://your-frontend"]
 ```
 
@@ -39,12 +39,23 @@ Optional overrides: board size (`BOARD_WIDTH`, `BOARD_HEIGHT`), clock duration (
 
 ## 3. Engine installation
 
-The backend loads the PyO3 bindings from the `chain_reaction` module. Two options:
+The backend loads the pure-Python engine from the `chainreaction_py` module. Install it from the [`Backend-Python`](https://github.com/AccXLR8/Backend-Python) repository.
 
-1. **Docker build (recommended)** – handled automatically by the provided `Dockerfile` (installs `maturin`, clones the repo, builds the wheel).
-2. **Manual install** – if running locally/CI: `pip install maturin` and then `pip install "git+https://github.com/AccXLR8/ChainReaction-Package#subdirectory=python-bindings"` inside your venv.
+1. **Docker build (recommended)** – handled automatically by the provided `Dockerfile`, which clones the repo and runs `pip install /tmp/chainreaction-py/python-engine`.
+2. **Manual install** – when running locally/CI:
 
-Ensure this runs in every environment where the backend starts.
+   ```bash
+   git clone https://github.com/AccXLR8/Backend-Python.git
+   python -m pip install Backend-Python/python-engine
+   ```
+
+   Or use the direct URL:
+
+   ```bash
+   python -m pip install "git+https://github.com/AccXLR8/Backend-Python@main#subdirectory=python-engine"
+   ```
+
+Ensure the module is present in every environment where the backend starts so the adapter can import `chainreaction_py`.
 
 ---
 
@@ -75,7 +86,7 @@ docker run --name chainreaction-app \
   chain-reaction-backend
 ```
 
-The image installs system deps, Rust, the engine package, backend code, and starts `uvicorn app.main:app --host 0.0.0.0 --port 8080`.
+The image installs system deps, the ChainReaction Py Engine (from Backend-Python), backend code, and starts `uvicorn app.main:app --host 0.0.0.0 --port 8080`.
 
 ---
 

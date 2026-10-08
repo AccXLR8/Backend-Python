@@ -1,12 +1,12 @@
 # Chain Reaction FastAPI Backend
 
-This backend exposes HTTP and WebSocket APIs for the two-player Chain Reaction engine. It orchestrates matchmaking, clocks, persistence, and communication with the authoritative Rust engine.
+This backend exposes HTTP and WebSocket APIs for the two-player Chain Reaction engine. It orchestrates matchmaking, clocks, persistence, and communication with the authoritative pure-Python engine shipped as the `chainreaction_py` library.
 
 ## Features
 
 - FastAPI application with modular routers
 - Health, game, matchmaking, and user endpoints
-- PyO3-powered Chain Reaction engine bindings (via the `chain_reaction` module) with a fake adapter fallback for tests
+- Pure-Python Chain Reaction engine bindings (via the `chainreaction_py` module) with a fake adapter fallback for tests
 - Secure JWT authentication with built-in username/password registration + guest tokens
 - SQLAlchemy models for users, games, participants, moves, and events backed by Postgres
 - Redis integration for matchmaking queues and distributed locks
@@ -35,7 +35,20 @@ pytest
 
 ## Engine bindings
 
-The backend loads the PyO3 module named by `ENGINE_MODULE` (defaults to `chain_reaction`). Build/install it with `maturin develop` from the `python-bindings` crate so the FastAPI app can import `chain_reaction` and call `new_game`/`apply_move`. If the module cannot be imported the service falls back to the deterministic fake adapter, so be sure to install the real engine in production.
+The backend loads the module named by `ENGINE_MODULE` (defaults to `chainreaction_py`). Install the pure-Python engine from the [`Backend-Python`](https://github.com/AccXLR8/Backend-Python) repository:
+
+```bash
+git clone https://github.com/AccXLR8/Backend-Python.git
+python -m pip install Backend-Python/python-engine
+```
+
+You can also rely on a direct URL install:
+
+```bash
+python -m pip install "git+https://github.com/AccXLR8/Backend-Python@main#subdirectory=python-engine"
+```
+
+Once the module is importable the FastAPI app can call `new_game`/`apply_move` directly. If the module cannot be imported the service falls back to the deterministic fake adapter, so be sure to install the real engine in production.
 
 ## WebSocket gameplay flow
 
@@ -63,7 +76,7 @@ See `.env.example` for required configuration: database, Redis, Azure storage, e
 
 ## Development Notes
 
-- The rust engine binding is injected via `ENGINE_MODULE`. Implement a PyO3 wrapper exporting `apply_move` and update the adapter.
+- The ChainReaction Py Engine is injected via `ENGINE_MODULE`. Install `chainreaction_py` from the Backend-Python repository (or another compatible module) before starting the API service.
 - Alembic migrations live in `app/database/migrations`; the server runs `alembic upgrade head` automatically during startup, so any new database is initialized without manual SQL.
 - Redis keys are centralized under `app/redis/keys.py`.
 

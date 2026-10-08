@@ -3,25 +3,20 @@ FROM python:3.11-slim
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    POETRY_VIRTUALENVS_CREATE=false \
-    PATH="/root/.cargo/bin:${PATH}"
+    PYTHONUNBUFFERED=1
 
-ARG CHAIN_REACTION_REPO=https://github.com/AccXLR8/ChainReaction-Package.git
-ARG CHAIN_REACTION_REF=main
+ARG CHAIN_REACTION_PY_REPO=https://github.com/AccXLR8/Backend-Python.git
+ARG CHAIN_REACTION_PY_REF=main
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential curl git \
+    && apt-get install -y --no-install-recommends build-essential git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
+RUN pip install --no-cache-dir --upgrade pip
 
-RUN pip install --no-cache-dir --upgrade pip maturin
-RUN git clone --depth 1 --branch ${CHAIN_REACTION_REF} ${CHAIN_REACTION_REPO} /tmp/chainreaction-engine \
-    && cd /tmp/chainreaction-engine/python-bindings \
-    && maturin build --release --strip \
-    && pip install --no-cache-dir /tmp/chainreaction-engine/target/wheels/*.whl \
-    && rm -rf /tmp/chainreaction-engine
+RUN git clone --depth 1 --branch ${CHAIN_REACTION_PY_REF} ${CHAIN_REACTION_PY_REPO} /tmp/chainreaction-py \
+    && pip install --no-cache-dir /tmp/chainreaction-py/python-engine \
+    && rm -rf /tmp/chainreaction-py
 
 COPY . .
 
