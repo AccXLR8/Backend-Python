@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 
+from app.matchmaking.modes import MatchmakingMode
 from app.redis.client import RedisClient
 from app.redis.keys import matchmaking_assignment_key
 from app.matchmaking.queue import MatchmakingQueue
@@ -11,20 +12,24 @@ class MatchmakingService:
     def __init__(self):
         self._redis_factory = RedisClient.instance
 
-    def _queue(self) -> MatchmakingQueue:
-        return MatchmakingQueue(self._redis_factory())
+    def _queue(self, mode: MatchmakingMode = MatchmakingMode.STANDARD) -> MatchmakingQueue:
+        return MatchmakingQueue(self._redis_factory(), mode=mode)
 
-    async def join_queue(self, user_id: uuid.UUID) -> tuple[str, str] | None:
-        queue = self._queue()
+    async def join_queue(self, user_id: uuid.UUID, mode: MatchmakingMode = MatchmakingMode.STANDARD) -> tuple[str, str] | None:
+        # Ensure a player is in only one queue at a time.
+        for other_mode in MatchmakingMode:
+            if other_mode != mode:
+                await self._queue(other_mode).remove(user_id)
+        queue = self._queue(mode)
         await queue.enqueue(user_id)
         return await queue.try_match()
 
-    async def leave_queue(self, user_id: uuid.UUID) -> None:
-        queue = self._queue()
+    async def leave_queue(self, user_id: uuid.UUID, mode: MatchmakingMode = MatchmakingMode.STANDARD) -> None:
+        queue = self._queue(mode)
         await queue.remove(user_id)
 
-    async def poll_pair(self) -> tuple[str, str] | None:
-        queue = self._queue()
+    async def poll_pair(self, mode: MatchmakingMode = MatchmakingMode.STANDARD) -> tuple[str, str] | None:
+        queue = self._queue(mode)
         return await queue.try_match()
 
     async def save_assignment(self, user_id: uuid.UUID, game_id: uuid.UUID, ttl_seconds: int = 600) -> None:

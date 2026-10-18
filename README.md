@@ -7,6 +7,8 @@ This backend exposes HTTP and WebSocket APIs for the two-player Chain Reaction e
 - FastAPI application with modular routers
 - Health, game, matchmaking, and user endpoints
 - Pure-Python Chain Reaction engine bindings (via the `chainreaction_py` module) with a fake adapter fallback for tests
+- Built-in "standard" (8×8) and "mini" (5×5) matchmaking queues so players can pick their preferred board size
+- Chess-style per-player clocks (standard defaults to 5 minutes, mini to 10 minutes) that only run for the active player
 - Secure JWT authentication with built-in username/password registration + guest tokens
 - SQLAlchemy models for users, games, participants, moves, and events backed by Postgres
 - Redis integration for matchmaking queues and distributed locks
@@ -35,17 +37,17 @@ pytest
 
 ## Engine bindings
 
-The backend loads the module named by `ENGINE_MODULE` (defaults to `chainreaction_py`). Install the pure-Python engine from the [`Backend-Python`](https://github.com/AccXLR8/Backend-Python) repository:
+The backend loads the module named by `ENGINE_MODULE` (defaults to `chainreaction_py`). Install the pure-Python engine from the [`Python-Engine`](https://github.com/AccXLR8/Python-Engine) repository:
 
 ```bash
-git clone https://github.com/AccXLR8/Backend-Python.git
-python -m pip install Backend-Python/python-engine
+git clone https://github.com/AccXLR8/Python-Engine.git
+python -m pip install Python-Engine
 ```
 
 You can also rely on a direct URL install:
 
 ```bash
-python -m pip install "git+https://github.com/AccXLR8/Backend-Python@main#subdirectory=python-engine"
+python -m pip install "git+https://github.com/AccXLR8/Python-Engine.git@main"
 ```
 
 Once the module is importable the FastAPI app can call `new_game`/`apply_move` directly. If the module cannot be imported the service falls back to the deterministic fake adapter, so be sure to install the real engine in production.
@@ -66,17 +68,27 @@ Once the module is importable the FastAPI app can call `new_game`/`apply_move` d
 
 ## Matchmaking
 
+Standard (8×8) board:
+
 - `POST /api/matchmaking/join` — enqueue the caller. As soon as at least two players queue up, the backend randomly pairs them, creates a game, and stores assignments in Redis.
 - `GET /api/matchmaking/status` — poll for your assignment; returns the game id once you’ve been paired.
 - `POST /api/matchmaking/leave` — leave the queue and discard any pending assignment.
 
+Mini (5×5) board:
+
+- `POST /api/matchmaking/mini/join`
+- `GET /api/matchmaking/mini/status`
+- `POST /api/matchmaking/mini/leave`
+
+Both variants use the same authentication + assignment flow; the mini endpoints always create 5×5 games and allocate 10 minutes per player so frontends can render and display the shorter mode separately.
+
 ## Environment Variables
 
-See `.env.example` for required configuration: database, Redis, Azure storage, engine module, etc.
+See `.env.example` for required configuration: database, Redis, Azure storage, engine module, etc. You can customize the standard board via `BOARD_WIDTH`/`BOARD_HEIGHT` and the mini board via `MINI_BOARD_WIDTH`/`MINI_BOARD_HEIGHT`, and you can tune the per-player clocks with `GAME_CLOCK_SECONDS` (standard queue) and `MINI_GAME_CLOCK_SECONDS` (mini queue).
 
 ## Development Notes
 
-- The ChainReaction Py Engine is injected via `ENGINE_MODULE`. Install `chainreaction_py` from the Backend-Python repository (or another compatible module) before starting the API service.
+- The ChainReaction Py Engine is injected via `ENGINE_MODULE`. Install `chainreaction_py` from the Python-Engine repository (or another compatible module) before starting the API service.
 - Alembic migrations live in `app/database/migrations`; the server runs `alembic upgrade head` automatically during startup, so any new database is initialized without manual SQL.
 - Redis keys are centralized under `app/redis/keys.py`.
 

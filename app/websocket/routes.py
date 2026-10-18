@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi import status as http_status
@@ -168,7 +169,10 @@ async def _handle_move_message(
             )
             return
 
-    message = {"type": ServerMessageType.MOVE_ACCEPTED, "payload": {"sequence": event.sequence, **event.payload}}
+    message_type = (
+        ServerMessageType.MOVE_ACCEPTED if event.event_type == "move" else ServerMessageType.GAME_FINISHED
+    )
+    message = {"type": message_type, "payload": {"sequence": event.sequence, **event.payload}}
     await ws_manager.broadcast(str(game_id), message)
     try:
         snapshot = await _build_snapshot(session_factory, game_id)
@@ -216,16 +220,24 @@ async def _build_snapshot(session_factory, game_id: uuid.UUID) -> dict:
         if user_ids:
             result = await session.execute(select(db.UserModel).where(db.UserModel.id.in_(user_ids)))
             users = {row.id: row for row in result.scalars().all()}
+        active_slot = game.current_player_slot
+        elapsed_ms = 0
+        if active_slot is not None and game.active_clock_started_at and game.status in {GameStatus.READY, GameStatus.ACTIVE}:
+            elapsed_seconds = max(0.0, (datetime.utcnow() - game.active_clock_started_at).total_seconds())
+            elapsed_ms = int(elapsed_seconds * 1000)
         players = []
         for participant in participants:
             user = users.get(participant.user_id)
+            remaining = participant.remaining_time_ms
+            if participant.player_slot == active_slot and elapsed_ms:
+                remaining = max(0, remaining - elapsed_ms)
             players.append(
                 {
                     "user_id": str(participant.user_id),
                     "username": user.username if user else "unknown",
                     "player_slot": participant.player_slot,
                     "connected": participant.connected,
-                    "time_remaining_ms": participant.remaining_time_ms,
+                    "time_remaining_ms": remaining,
                 }
             )
         players.sort(key=lambda payload: payload["player_slot"])

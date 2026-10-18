@@ -1,4 +1,7 @@
-def matchmaking_queue_key(mode: str = "default") -> str:
+from app.matchmaking.modes import MatchmakingMode
+
+
+def matchmaking_queue_key(mode: str = MatchmakingMode.STANDARD.value) -> str:
     return f"matchmaking:queue:{mode}"
 
 

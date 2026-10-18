@@ -21,7 +21,10 @@ class Settings(BaseSettings):
 
     board_width: int = Field(default=8)
     board_height: int = Field(default=8)
+    mini_board_width: int = Field(default=5)
+    mini_board_height: int = Field(default=5)
     game_clock_seconds: int = Field(default=300)
+    mini_game_clock_seconds: int = Field(default=600)
 
     websocket_heartbeat_seconds: int = Field(default=15)
     rate_limit_moves_per_minute: int = Field(default=60)
@@ -31,6 +34,10 @@ class Settings(BaseSettings):
     @property
     def game_clock_ms(self) -> int:
         return self.game_clock_seconds * 1000
+
+    @property
+    def mini_game_clock_ms(self) -> int:
+        return self.mini_game_clock_seconds * 1000
 
 
 @lru_cache(maxsize=1)

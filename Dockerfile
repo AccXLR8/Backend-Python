@@ -5,7 +5,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-ARG CHAIN_REACTION_PY_REPO=https://github.com/AccXLR8/Backend-Python.git
+ARG CHAIN_REACTION_PY_REPO=https://github.com/AccXLR8/Python-Engine.git
 ARG CHAIN_REACTION_PY_REF=main
 
 RUN apt-get update \
@@ -15,7 +15,7 @@ RUN apt-get update \
 RUN pip install --no-cache-dir --upgrade pip
 
 RUN git clone --depth 1 --branch ${CHAIN_REACTION_PY_REF} ${CHAIN_REACTION_PY_REPO} /tmp/chainreaction-py \
-    && pip install --no-cache-dir /tmp/chainreaction-py/python-engine \
+    && pip install --no-cache-dir /tmp/chainreaction-py \
     && rm -rf /tmp/chainreaction-py
 
 COPY . .

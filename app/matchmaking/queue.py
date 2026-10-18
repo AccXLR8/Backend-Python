@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import random
 import uuid
-from typing import Optional
+from typing import Optional, Union
 
 from redis.asyncio import Redis
 
+from app.matchmaking.modes import MatchmakingMode
 from app.redis.keys import matchmaking_queue_key
 
 
 class MatchmakingQueue:
-    def __init__(self, redis: Redis, mode: str = "default"):
+    def __init__(self, redis: Redis, mode: Union[str, MatchmakingMode] = MatchmakingMode.STANDARD):
         self.redis = redis
-        self.mode = mode
+        self.mode = mode.value if isinstance(mode, MatchmakingMode) else mode
 
     async def enqueue(self, user_id: uuid.UUID) -> None:
         await self.redis.sadd(matchmaking_queue_key(self.mode), str(user_id))

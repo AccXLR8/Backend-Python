@@ -219,7 +219,7 @@ For a completely clean build:
 docker build --no-cache -t chain-reaction-backend .
 ```
 
-The Dockerfile installs the ChainReaction Py Engine automatically (cloning the Backend-Python repository during the build).
+The Dockerfile installs the ChainReaction Py Engine automatically (cloning the Python-Engine repository during the build).
 
 This is one of the reasons I would **keep your existing Dockerfile** rather than manually installing the engine plus Python dependencies on the VM.
 
@@ -247,7 +247,10 @@ docker run -d \
   -e ENGINE_MODULE=chainreaction_py \
   -e GAME_BOARD_WIDTH=8 \
   -e GAME_BOARD_HEIGHT=8 \
+  -e MINI_BOARD_WIDTH=5 \
+  -e MINI_BOARD_HEIGHT=5 \
   -e GAME_CLOCK_SECONDS=300 \
+  -e MINI_GAME_CLOCK_SECONDS=600 \
   -e WEBSOCKET_HEARTBEAT_SECONDS=15 \
   -e RATE_LIMIT_MOVES_PER_MINUTE=60 \
   -e MATCHMAKING_QUEUE_TIMEOUT_SECONDS=30 \

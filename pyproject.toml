@@ -22,7 +22,8 @@ dependencies = [
     "tenacity>=8.3.0",
     "orjson>=3.10.3",
     "msgpack>=1.0.8",
-    "pyinstrument>=4.6.2"
+    "pyinstrument>=4.6.2",
+    "chainreaction-py @ git+https://github.com/AccXLR8/Python-Engine.git@main",
 ]
 
 [project.optional-dependencies]

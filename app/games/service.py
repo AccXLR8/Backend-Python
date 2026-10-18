@@ -27,7 +27,6 @@ from app.engine.adapter import (
     FakeEngineAdapter,
 )
 from app.engine.models import EngineGameState, EngineMove
-from app.games.clock import GameClockState
 from app.games.events import GameEvent
 from app.games.exceptions import (
     GameFinishedError,
@@ -39,7 +38,7 @@ from app.games.exceptions import (
     PlayerNotInGameError,
 )
 from app.games.manager import game_lock_manager
-from app.games.models import FinishReason, GameConfig, GameStatus, PlayerClock
+from app.games.models import FinishReason, GameConfig, GameStatus
 from app.utils.time import MonotonicClock
 
 logger = logging.getLogger(__name__)
@@ -151,7 +150,9 @@ class GameService:
         if game.player_1_id and game.player_2_id:
             game.status = GameStatus.READY
             game.current_player_slot = 0
-            game.started_at = datetime.utcnow()
+            timestamp = datetime.utcnow()
+            game.started_at = timestamp
+            game.active_clock_started_at = timestamp
 
         return game
 
@@ -181,6 +182,7 @@ class GameService:
 
         lock = game_lock_manager.get_lock(str(game_id))
         game_finished = False
+        move_event: GameEvent | None = None
         async with lock:
             if game.current_player_slot is None:
                 game.current_player_slot = 0
@@ -194,114 +196,133 @@ class GameService:
                     raise MoveAlreadyProcessedError()
 
             participants = await participant_repo.list_for_game(game_id)
-            clock_state = self._build_clock_state(participants, game.current_player_slot)
-            now = self.monotonic_clock.now()
-            clock_state.start(player_slot, now)
-            if not clock_state.has_time(player_slot, now):
-                raise GameFinishedError()
-
-            engine_state = EngineGameState(game.latest_state or {"board": []})
-            engine_move = EngineMove(row=cell // game.board_width, col=cell % game.board_width)
-
-            try:
-                result = await self.engine_adapter.apply_move(engine_state, player_slot, engine_move)
-            except EngineIllegalMoveError as exc:  # pragma: no cover - depends on engine runtime
-                raise IllegalMoveError(str(exc)) from exc
-
-            clock_state.stop(player_slot, now)
-            next_player = (
-                result.final_state.data.get("current_player")
-                if isinstance(result.final_state.data, dict)
-                else None
-            )
-            if next_player is None:
-                next_player = 1 - player_slot
-            clock_state.start(next_player, now)
-
-            final_state_payload = result.final_state.data
-            final_state_size = len(json.dumps(final_state_payload)) if final_state_payload else 0
-            reaction_payload = result.reaction or {}
-            reaction_size = len(json.dumps(reaction_payload)) if reaction_payload else 0
-            latest_state_size = len(json.dumps(game.latest_state or {}))
-
-            game.turn_number = int(final_state_payload.get("turn_number", game.turn_number + 1))
-            game.current_player_slot = next_player
-            game.latest_state = final_state_payload
-            game.status = GameStatus.ACTIVE
-
-            outcome = result.result or {}
-            status_meta = outcome.get("status") or {}
-            if isinstance(status_meta, dict):
-                status_kind = status_meta.get("kind")
-            elif isinstance(status_meta, str):
-                status_kind = status_meta
-            else:
-                status_kind = None
-            if status_kind and status_kind.lower() == "won":
-                game.status = GameStatus.FINISHED
-                game.finished_at = datetime.utcnow()
-                game.finish_reason = FinishReason.NORMAL.value
-                winner_slot = outcome.get("winner")
-                if winner_slot == 0:
-                    game.winner_id = game.player_1_id
-                    game.loser_id = game.player_2_id
-                elif winner_slot == 1:
-                    game.winner_id = game.player_2_id
-                    game.loser_id = game.player_1_id
-                game_finished = True
-
             participant_lookup: Dict[int, db.GameParticipantModel] = {p.player_slot: p for p in participants}
-            if player_slot in participant_lookup:
-                participant_lookup[player_slot].remaining_time_ms = clock_state.clocks[player_slot].remaining_ms
-            if next_player in participant_lookup:
-                participant_lookup[next_player].remaining_time_ms = clock_state.clocks[next_player].remaining_ms
+            now_wall = datetime.utcnow()
+            self._apply_elapsed_time(game, participant_lookup, now_wall)
 
-            sequence = await move_repo.last_sequence(game_id) + 1
-            move = db.MoveModel(
-                game_id=game_id,
-                player_slot=player_slot,
-                cell=cell,
-                sequence=sequence,
-                turn_number=game.turn_number,
-                client_move_id=client_move_id,
-                time_remaining_ms=clock_state.clocks[player_slot].remaining_ms,
-            )
-            await move_repo.create(move)
+            current_clock = participant_lookup.get(player_slot)
+            if current_clock is None:
+                raise PlayerNotInGameError()
 
-            event_payload = {
-                "player_slot": player_slot,
-                "cell": cell,
-                "reaction": result.reaction,
-                "final_state": result.final_state.data,
-                "outcome": outcome,
-                "turn_number": game.turn_number,
-                "status": game.status.value,
-            }
-            event = db.GameEventModel(
-                game_id=game_id,
-                sequence=sequence,
-                event_type="move",
-                payload=event_payload,
-            )
-            await event_repo.append(event)
+            if current_clock.remaining_time_ms <= 0:
+                move_event = await self._handle_timeout(
+                    game=game,
+                    participant_lookup=participant_lookup,
+                    timed_out_slot=player_slot,
+                    move_repo=move_repo,
+                    event_repo=event_repo,
+                )
+                game_finished = True
+            else:
+                move_start = self.monotonic_clock.now()
+                engine_state = EngineGameState(game.latest_state or {"board": []})
+                engine_move = EngineMove(row=cell // game.board_width, col=cell % game.board_width)
 
-            rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-            logger.info(
-                "move.processed",
-                extra={
-                    "game_id": str(game_id),
-                    "sequence": sequence,
+                try:
+                    result = await self.engine_adapter.apply_move(engine_state, player_slot, engine_move)
+                except EngineIllegalMoveError as exc:  # pragma: no cover - depends on engine runtime
+                    raise IllegalMoveError(str(exc)) from exc
+
+                processing_elapsed_ms = int((self.monotonic_clock.now() - move_start) * 1000)
+                if processing_elapsed_ms > 0:
+                    current_clock.remaining_time_ms = max(0, current_clock.remaining_time_ms - processing_elapsed_ms)
+
+                next_player = (
+                    result.final_state.data.get("current_player")
+                    if isinstance(result.final_state.data, dict)
+                    else None
+                )
+                if next_player is None:
+                    next_player = 1 - player_slot
+
+                final_state_payload = result.final_state.data
+                final_state_size = len(json.dumps(final_state_payload)) if final_state_payload else 0
+                reaction_payload = result.reaction or {}
+                reaction_size = len(json.dumps(reaction_payload)) if reaction_payload else 0
+                latest_state_size = len(json.dumps(game.latest_state or {}))
+
+                game.turn_number = int(final_state_payload.get("turn_number", game.turn_number + 1))
+                game.current_player_slot = next_player
+                game.latest_state = final_state_payload
+                game.status = GameStatus.ACTIVE
+
+                outcome = result.result or {}
+                status_meta = outcome.get("status") or {}
+                if isinstance(status_meta, dict):
+                    status_kind = status_meta.get("kind")
+                elif isinstance(status_meta, str):
+                    status_kind = status_meta
+                else:
+                    status_kind = None
+                if status_kind and status_kind.lower() == "won":
+                    game.status = GameStatus.FINISHED
+                    game.finished_at = datetime.utcnow()
+                    game.finish_reason = FinishReason.NORMAL.value
+                    winner_slot = outcome.get("winner")
+                    if winner_slot == 0:
+                        game.winner_id = game.player_1_id
+                        game.loser_id = game.player_2_id
+                    elif winner_slot == 1:
+                        game.winner_id = game.player_2_id
+                        game.loser_id = game.player_1_id
+                    game_finished = True
+
+                if game.status == GameStatus.FINISHED:
+                    game.current_player_slot = None
+                    game.active_clock_started_at = None
+                else:
+                    game.active_clock_started_at = datetime.utcnow()
+
+                sequence = await move_repo.last_sequence(game_id) + 1
+                move = db.MoveModel(
+                    game_id=game_id,
+                    player_slot=player_slot,
+                    cell=cell,
+                    sequence=sequence,
+                    turn_number=game.turn_number,
+                    client_move_id=client_move_id,
+                    time_remaining_ms=current_clock.remaining_time_ms,
+                )
+                await move_repo.create(move)
+
+                event_payload = {
                     "player_slot": player_slot,
                     "cell": cell,
-                    "final_state_bytes": final_state_size,
-                    "reaction_bytes": reaction_size,
-                    "latest_state_bytes": latest_state_size,
-                    "rss_kb": rss_kb,
+                    "reaction": result.reaction,
+                    "final_state": result.final_state.data,
+                    "outcome": outcome,
+                    "turn_number": game.turn_number,
                     "status": game.status.value,
-                },
-            )
+                    "time_remaining_ms": current_clock.remaining_time_ms,
+                }
+                event = db.GameEventModel(
+                    game_id=game_id,
+                    sequence=sequence,
+                    event_type="move",
+                    payload=event_payload,
+                )
+                await event_repo.append(event)
 
-            move_event = GameEvent(sequence=sequence, event_type="move", payload=event_payload)
+                rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+                logger.info(
+                    "move.processed",
+                    extra={
+                        "game_id": str(game_id),
+                        "sequence": sequence,
+                        "player_slot": player_slot,
+                        "cell": cell,
+                        "final_state_bytes": final_state_size,
+                        "reaction_bytes": reaction_size,
+                        "latest_state_bytes": latest_state_size,
+                        "rss_kb": rss_kb,
+                        "status": game.status.value,
+                    },
+                )
+
+                move_event = GameEvent(sequence=sequence, event_type="move", payload=event_payload)
+
+        if move_event is None:  # pragma: no cover - defensive guard
+            raise RuntimeError("Move event was not generated")
 
         if game_finished:
             game_lock_manager.release(str(game_id))
@@ -315,18 +336,85 @@ class GameService:
             return 1
         raise PlayerNotInGameError()
 
-    def _build_clock_state(self, participants, active_slot: Optional[int]) -> GameClockState:
-        clocks = {}
-        for participant in participants:
-            clocks[participant.player_slot] = PlayerClock(
-                player_slot=participant.player_slot,
-                remaining_ms=participant.remaining_time_ms,
-            )
-        if 0 not in clocks:
-            clocks[0] = PlayerClock(player_slot=0, remaining_ms=self.settings.game_clock_ms)
-        if 1 not in clocks:
-            clocks[1] = PlayerClock(player_slot=1, remaining_ms=self.settings.game_clock_ms)
-        return GameClockState(clocks=clocks, active_slot=active_slot)
+    def _apply_elapsed_time(
+        self,
+        game: db.GameModel,
+        participant_lookup: Dict[int, db.GameParticipantModel],
+        now: datetime,
+    ) -> None:
+        slot = game.current_player_slot
+        if slot is None:
+            return
+        started_at = game.active_clock_started_at
+        if started_at is None:
+            game.active_clock_started_at = now
+            return
+        elapsed_seconds = max(0.0, (now - started_at).total_seconds())
+        elapsed_ms = int(elapsed_seconds * 1000)
+        if elapsed_ms == 0:
+            return
+        clock = participant_lookup.get(slot)
+        if not clock:
+            return
+        clock.remaining_time_ms = max(0, clock.remaining_time_ms - elapsed_ms)
+        game.active_clock_started_at = now
+
+    async def _handle_timeout(
+        self,
+        game: db.GameModel,
+        participant_lookup: Dict[int, db.GameParticipantModel],
+        timed_out_slot: int,
+        move_repo: MoveRepository,
+        event_repo: GameEventRepository,
+    ) -> GameEvent:
+        winner_slot = 1 - timed_out_slot
+        now = datetime.utcnow()
+        game.status = GameStatus.FINISHED
+        game.finished_at = now
+        game.finish_reason = FinishReason.TIMEOUT.value
+        game.current_player_slot = None
+        game.active_clock_started_at = None
+        timed_out_clock = participant_lookup.get(timed_out_slot)
+        if timed_out_clock:
+            timed_out_clock.remaining_time_ms = 0
+        if winner_slot == 0:
+            game.winner_id = game.player_1_id
+            game.loser_id = game.player_2_id
+        elif winner_slot == 1:
+            game.winner_id = game.player_2_id
+            game.loser_id = game.player_1_id
+
+        sequence = await move_repo.last_sequence(game.id) + 1
+        payload = {
+            "player_slot": timed_out_slot,
+            "reaction": {},
+            "final_state": game.latest_state,
+            "outcome": {
+                "status": {"kind": "won"},
+                "winner": winner_slot,
+                "reason": FinishReason.TIMEOUT.value,
+            },
+            "turn_number": game.turn_number,
+            "status": game.status.value,
+            "finish_reason": FinishReason.TIMEOUT.value,
+            "time_remaining_ms": timed_out_clock.remaining_time_ms if timed_out_clock else 0,
+        }
+        event = db.GameEventModel(
+            game_id=game.id,
+            sequence=sequence,
+            event_type="timeout",
+            payload=payload,
+        )
+        await event_repo.append(event)
+        logger.info(
+            "game.timeout",
+            extra={
+                "game_id": str(game.id),
+                "timed_out_slot": timed_out_slot,
+                "winner_slot": winner_slot,
+            },
+        )
+        return GameEvent(sequence=sequence, event_type="timeout", payload=payload)
 
 
 def _build_game_service() -> GameService:

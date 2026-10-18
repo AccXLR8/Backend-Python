@@ -9,7 +9,7 @@ This document summarizes everything required to run the Chain Reaction backend w
 | Requirement | Notes |
 | --- | --- |
 | **Python 3.11** | Only needed if you run outside Docker. |
-| **Git** | Needed to install the ChainReaction Py Engine from the Backend-Python repo. |
+| **Git** | Needed to install the ChainReaction Py Engine from the Python-Engine repo. |
 | **Docker (optional)** | Recommended path: build the provided `Dockerfile` and run the container. |
 | **PostgreSQL 14+** | All persistent game data lives here. Use `asyncpg` DSN. |
 | **Redis 6+** | Matchmaking queues, distributed locks, connection metadata. |
@@ -33,26 +33,26 @@ ENGINE_MODULE=chainreaction_py
 ALLOWED_ORIGINS=["https://your-frontend"]
 ```
 
-Optional overrides: board size (`BOARD_WIDTH`, `BOARD_HEIGHT`), clock duration (`GAME_CLOCK_SECONDS`), websocket heartbeat interval, etc. See `app/config/settings.py` for the full list.
+Optional overrides: board size (`BOARD_WIDTH`, `BOARD_HEIGHT`), mini-board size (`MINI_BOARD_WIDTH`, `MINI_BOARD_HEIGHT`), clock duration (`GAME_CLOCK_SECONDS` for standard, `MINI_GAME_CLOCK_SECONDS` for mini), websocket heartbeat interval, etc. See `app/config/settings.py` for the full list.
 
 ---
 
 ## 3. Engine installation
 
-The backend loads the pure-Python engine from the `chainreaction_py` module. Install it from the [`Backend-Python`](https://github.com/AccXLR8/Backend-Python) repository.
+The backend loads the pure-Python engine from the `chainreaction_py` module. Install it from the [`Python-Engine`](https://github.com/AccXLR8/Python-Engine) repository.
 
-1. **Docker build (recommended)** – handled automatically by the provided `Dockerfile`, which clones the repo and runs `pip install /tmp/chainreaction-py/python-engine`.
+1. **Docker build (recommended)** – handled automatically by the provided `Dockerfile`, which clones the repo and runs `pip install /tmp/chainreaction-py`.
 2. **Manual install** – when running locally/CI:
 
    ```bash
-   git clone https://github.com/AccXLR8/Backend-Python.git
-   python -m pip install Backend-Python/python-engine
+   git clone https://github.com/AccXLR8/Python-Engine.git
+   python -m pip install Python-Engine
    ```
 
    Or use the direct URL:
 
    ```bash
-   python -m pip install "git+https://github.com/AccXLR8/Backend-Python@main#subdirectory=python-engine"
+   python -m pip install "git+https://github.com/AccXLR8/Python-Engine.git@main"
    ```
 
 Ensure the module is present in every environment where the backend starts so the adapter can import `chainreaction_py`.
@@ -86,7 +86,7 @@ docker run --name chainreaction-app \
   chain-reaction-backend
 ```
 
-The image installs system deps, the ChainReaction Py Engine (from Backend-Python), backend code, and starts `uvicorn app.main:app --host 0.0.0.0 --port 8080`.
+The image installs system deps, the ChainReaction Py Engine (from Python-Engine), backend code, and starts `uvicorn app.main:app --host 0.0.0.0 --port 8080`.
 
 ---
 
@@ -127,7 +127,7 @@ alembic upgrade head  # uses alembic.ini
 
 - **Health**: `/api/health` (liveness) and `/api/health/ready` (checks DB + Redis connections).
 - **Auth**: `/api/auth/register`, `/api/auth/login`, `/api/auth/guest` for manual credentials and guest tokens. All responses return `access_token` you pass to other endpoints/websockets.
-- **Matchmaking**: `/api/matchmaking/join`, `/api/matchmaking/status`, `/api/matchmaking/leave` (auto-pairs players randomly and writes assignments to Redis).
+- **Matchmaking**: `/api/matchmaking/join`, `/api/matchmaking/status`, `/api/matchmaking/leave` for the 8×8 queue plus `/api/matchmaking/mini/*` for the dedicated 5×5 queue (both auto-pair players and store assignments in Redis).
 - **Gameplay REST**: `/api/games` (create/join/get/history, authenticated with `Authorization: Bearer <JWT>`).
 - **WebSocket**: `ws://<host>/ws/games/{game_id}?token=<JWT>` for real-time play. Messages follow `ServerMessageType` / `ClientMessageType` enums in `app/websocket/protocol.py`.
 
