@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     azure_storage_connection_string: str = Field(..., alias="AZURE_STORAGE_CONNECTION_STRING")
     azure_blob_container: str = Field(default="replays")
 
-    engine_module: str = Field(default="chainreaction_py")
+    engine_module: str = Field(default="python_engine")
 
     board_width: int = Field(default=8)
     board_height: int = Field(default=8)

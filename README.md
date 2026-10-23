@@ -37,7 +37,7 @@ pytest
 
 ## Engine bindings
 
-The backend loads the module named by `ENGINE_MODULE` (defaults to `chainreaction_py`). Install the pure-Python engine from the [`Python-Engine`](https://github.com/AccXLR8/Python-Engine) repository:
+The backend loads the module named by `ENGINE_MODULE` (defaults to `python_engine`). Install the pure-Python engine from the [`Python-Engine`](https://github.com/AccXLR8/Python-Engine) repository:
 
 ```bash
 git clone https://github.com/AccXLR8/Python-Engine.git
@@ -98,7 +98,7 @@ See `.env.example` for required configuration: database, Redis, Azure storage, e
 
 ## Development Notes
 
-- The ChainReaction Py Engine is injected via `ENGINE_MODULE`. Install `chainreaction_py` from the Python-Engine repository (or another compatible module) before starting the API service.
+- The ChainReaction Py Engine is injected via `ENGINE_MODULE`. Install `python_engine` from the Python-Engine repository (or another compatible module) before starting the API service.
 - Alembic migrations live in `app/database/migrations`; the server runs `alembic upgrade head` automatically during startup, so any new database is initialized without manual SQL.
 - Redis keys are centralized under `app/redis/keys.py`.
 
