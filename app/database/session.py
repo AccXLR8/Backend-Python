@@ -7,6 +7,7 @@ from typing import AsyncGenerator, Dict, Tuple
 
 from sqlalchemy import text
 from sqlalchemy.engine import URL, make_url
+from sqlalchemy.engine.url import URL as SAURL
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 logger = logging.getLogger("app.database")
@@ -67,7 +68,7 @@ class Database:
 
     @staticmethod
     def _prepare_async_url(database_url: str) -> Tuple[str, Dict[str, object], Dict[str, object]]:
-        url: URL = make_url(database_url)
+        url: SAURL = make_url(database_url)
         metadata = {
             "driver": url.drivername,
             "host": url.host or "local",
@@ -75,15 +76,27 @@ class Database:
         }
         connect_args: Dict[str, object] = {}
         query = dict(url.query)
+
         if url.drivername.startswith("postgresql+asyncpg"):
-            sslmode = (query.pop("sslmode", None) or "").lower()
-            # asyncpg does not understand channel_binding; remove to avoid unexpected kwargs
+            ssl_setting = (
+                (query.pop("ssl", None) or query.pop("sslmode", None) or "").lower()
+            )
+            # Remove unsupported asyncpg arguments
             query.pop("channel_binding", None)
-            if sslmode not in ("", "disable", "allow"):
+
+            if ssl_setting in {"require", "verify-ca", "verify-full"}:
                 connect_args["ssl"] = ssl.create_default_context()
                 metadata["ssl"] = True
+            elif ssl_setting in {"", "disable", "allow"}:
+                metadata["ssl"] = False
+            elif ssl_setting:
+                logger.warning("Unknown SSL option '%s' - assuming TLS required", ssl_setting)
+                connect_args["ssl"] = ssl.create_default_context()
+                metadata["ssl"] = True
+
             url = url.set(query=query)
-        return str(url), connect_args, metadata
+
+        return url.render_as_string(hide_password=False), connect_args, metadata
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

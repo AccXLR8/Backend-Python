@@ -6,6 +6,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
+from sqlalchemy.engine import make_url
 
 from app.config.settings import get_settings
 
@@ -13,11 +14,21 @@ logger = logging.getLogger("app.migrations")
 
 
 def _sync_url(url: str) -> str:
-    if url.startswith("postgresql+asyncpg"):
-        return url.replace("+asyncpg", "", 1)
-    if url.startswith("postgresql+psycopg"):
-        return url.replace("+psycopg", "", 1)
-    return url
+    sa_url = make_url(url)
+    driver = sa_url.drivername
+    if driver.startswith("postgresql+asyncpg"):
+        driver = driver.replace("+asyncpg", "", 1)
+    elif driver.startswith("postgresql+psycopg"):
+        driver = driver.replace("+psycopg", "", 1)
+
+    query = dict(sa_url.query)
+    ssl_value = query.pop("ssl", None)
+    if ssl_value and "sslmode" not in query:
+        query["sslmode"] = ssl_value
+    query.pop("channel_binding", None)
+
+    sa_url = sa_url.set(drivername=driver, query=query)
+    return sa_url.render_as_string(hide_password=False)
 
 
 _MIGRATIONS_RAN = False
