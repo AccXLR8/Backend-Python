@@ -52,6 +52,16 @@ python -m pip install "git+https://github.com/AccXLR8/Python-Engine.git@main"
 
 Once the module is importable the FastAPI app calls `new_game` and `apply_move` directly. Make sure the engine is installed in every environment where the backend runs.
 
+## Database configuration & migrations
+
+Set `DATABASE_URL` to the Postgres instance you want to use. For the shared Neon instance provided for testing you can drop this straight into your `.env` (note the quotes to keep the `&` intact):
+
+```env
+DATABASE_URL="postgresql+asyncpg://neondb_owner:npg_WeRj7Jz3ByPX@ep-shiny-rain-b58w61ym-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+```
+
+The application automatically runs `alembic upgrade head` during startup (see `app/database/migrations_runner.py`), so connecting it to a fresh Neon database will create all tables without manual SQL. You can still run migrations yourself with `alembic upgrade head` if you prefer to manage them outside the app lifecycle.
+
 ## WebSocket gameplay flow
 
 - Clients connect to `ws://<host>/ws/games/{game_id}?token=<JWT>` (or supply `Authorization: Bearer <JWT>`).
