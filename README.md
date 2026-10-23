@@ -6,7 +6,7 @@ This backend exposes HTTP and WebSocket APIs for the two-player Chain Reaction e
 
 - FastAPI application with modular routers
 - Health, game, matchmaking, and user endpoints
-- Pure-Python Chain Reaction engine bindings (via the `chainreaction_py` module) with a fake adapter fallback for tests
+- Pure-Python Chain Reaction engine bindings (via the `chainreaction_py` module) invoked directly from the backend
 - Built-in "standard" (8×8) and "mini" (5×5) matchmaking queues so players can pick their preferred board size
 - Chess-style per-player clocks (standard defaults to 5 minutes, mini to 10 minutes) that only run for the active player
 - Secure JWT authentication with built-in username/password registration + guest tokens
@@ -50,7 +50,7 @@ You can also rely on a direct URL install:
 python -m pip install "git+https://github.com/AccXLR8/Python-Engine.git@main"
 ```
 
-Once the module is importable the FastAPI app can call `new_game`/`apply_move` directly. If the module cannot be imported the service falls back to the deterministic fake adapter, so be sure to install the real engine in production.
+Once the module is importable the FastAPI app calls `new_game` and `apply_move` directly. Make sure the engine is installed in every environment where the backend runs.
 
 ## WebSocket gameplay flow
 

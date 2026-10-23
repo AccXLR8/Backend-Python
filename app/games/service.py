@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import resource
 import uuid
+from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from importlib import import_module
-from typing import Dict, Optional
+from types import ModuleType
+from typing import Any, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,13 +23,6 @@ from app.database.repositories import (
     ParticipantRepository,
     UserRepository,
 )
-from app.engine.adapter import (
-    ChainReactionPyEngineAdapter,
-    EngineAdapter,
-    EngineIllegalMoveError,
-    FakeEngineAdapter,
-)
-from app.engine.models import EngineGameState, EngineMove
 from app.games.events import GameEvent
 from app.games.exceptions import (
     GameFinishedError,
@@ -45,9 +41,23 @@ logger = logging.getLogger(__name__)
 
 
 class GameService:
-    def __init__(self, engine_adapter: Optional[EngineAdapter] = None):
+    def __init__(self, engine_module: Optional[ModuleType] = None):
         settings = get_settings()
-        self.engine_adapter = engine_adapter or ChainReactionPyEngineAdapter(settings.engine_module)
+        module_name = settings.engine_module
+        module = engine_module or import_module(module_name)
+        move_cls = getattr(module, "Move", None)
+        game_state_cls = getattr(module, "GameState", None)
+        illegal_cls = getattr(module, "IllegalMoveError", None)
+        if illegal_cls is None:
+            errors_mod = getattr(module, "errors", None)
+            if errors_mod is not None:
+                illegal_cls = getattr(errors_mod, "IllegalMoveError", None)
+        if move_cls is None or game_state_cls is None:
+            raise RuntimeError("chainreaction_py module is missing required exports")
+        self.engine_module = module
+        self.move_cls = move_cls
+        self.game_state_cls = game_state_cls
+        self.illegal_move_cls = illegal_cls
         self.monotonic_clock = MonotonicClock()
         self.settings = settings
 
@@ -61,10 +71,11 @@ class GameService:
         creator_id = uuid.UUID(creator.id)
         await user_repo.get_or_create(creator_id, creator.username)
 
-        engine_state = await self.engine_adapter.new_game_state(
-            width=config.board_width,
-            height=config.board_height,
-            players=[0, 1],
+        engine_state_payload = await asyncio.to_thread(
+            self._create_new_game_state_payload,
+            config.board_width,
+            config.board_height,
+            [0, 1],
         )
 
         game_repo = GameRepository(session)
@@ -76,7 +87,7 @@ class GameService:
             initial_clock_ms=config.initial_time_ms,
             current_player_slot=0,
             player_1_id=creator_id,
-            latest_state=engine_state.data,
+            latest_state=engine_state_payload,
             turn_number=0,
         )
         await game_repo.create(game)
@@ -215,29 +226,37 @@ class GameService:
                 game_finished = True
             else:
                 move_start = self.monotonic_clock.now()
-                engine_state = EngineGameState(game.latest_state or {"board": []})
-                engine_move = EngineMove(row=cell // game.board_width, col=cell % game.board_width)
+                row = cell // game.board_width
+                col = cell % game.board_width
 
                 try:
-                    result = await self.engine_adapter.apply_move(engine_state, player_slot, engine_move)
-                except EngineIllegalMoveError as exc:  # pragma: no cover - depends on engine runtime
-                    raise IllegalMoveError(str(exc)) from exc
+                    (
+                        final_state_payload,
+                        reaction_payload,
+                        outcome_payload,
+                        payload_bytes,
+                        timeline_steps,
+                    ) = await asyncio.to_thread(
+                        self._apply_move_payloads,
+                        game.latest_state or {"board": []},
+                        player_slot,
+                        row,
+                        col,
+                    )
+                except Exception as exc:  # pragma: no cover - depends on engine runtime
+                    if self.illegal_move_cls and isinstance(exc, self.illegal_move_cls):
+                        raise IllegalMoveError(str(exc)) from exc
+                    raise
 
                 processing_elapsed_ms = int((self.monotonic_clock.now() - move_start) * 1000)
                 if processing_elapsed_ms > 0:
                     current_clock.remaining_time_ms = max(0, current_clock.remaining_time_ms - processing_elapsed_ms)
 
-                next_player = (
-                    result.final_state.data.get("current_player")
-                    if isinstance(result.final_state.data, dict)
-                    else None
-                )
+                next_player = final_state_payload.get("current_player")
                 if next_player is None:
                     next_player = 1 - player_slot
 
-                final_state_payload = result.final_state.data
                 final_state_size = len(json.dumps(final_state_payload)) if final_state_payload else 0
-                reaction_payload = result.reaction or {}
                 reaction_size = len(json.dumps(reaction_payload)) if reaction_payload else 0
                 latest_state_size = len(json.dumps(game.latest_state or {}))
 
@@ -246,7 +265,7 @@ class GameService:
                 game.latest_state = final_state_payload
                 game.status = GameStatus.ACTIVE
 
-                outcome = result.result or {}
+                outcome = outcome_payload or {}
                 status_meta = outcome.get("status") or {}
                 if isinstance(status_meta, dict):
                     status_kind = status_meta.get("kind")
@@ -288,8 +307,8 @@ class GameService:
                 event_payload = {
                     "player_slot": player_slot,
                     "cell": cell,
-                    "reaction": result.reaction,
-                    "final_state": result.final_state.data,
+                    "reaction": reaction_payload,
+                    "final_state": final_state_payload,
                     "outcome": outcome,
                     "turn_number": game.turn_number,
                     "status": game.status.value,
@@ -316,6 +335,8 @@ class GameService:
                         "latest_state_bytes": latest_state_size,
                         "rss_kb": rss_kb,
                         "status": game.status.value,
+                        "engine_payload_bytes": payload_bytes,
+                        "timeline_steps": timeline_steps,
                     },
                 )
 
@@ -416,16 +437,92 @@ class GameService:
         )
         return GameEvent(sequence=sequence, event_type="timeout", payload=payload)
 
+    def _create_new_game_state_payload(self, width: int, height: int, players: list[int]) -> dict[str, Any]:
+        state = self.engine_module.new_game(width=width, height=height, players=list(players))
+        payload = self._game_state_to_payload(state)
+        logger.info(
+            "engine.new_game_state",
+            extra={
+                "width": width,
+                "height": height,
+                "players": list(players),
+                "payload_bytes": len(json.dumps(payload)),
+            },
+        )
+        return payload
+
+    def _apply_move_payloads(
+        self,
+        state_payload: dict[str, Any],
+        player_slot: int,
+        row: int,
+        col: int,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], int, int]:
+        cr_state = self._game_state_from_payload(state_payload)
+        move = self.move_cls(row=row, col=col)
+        result = self.engine_module.apply_move(cr_state, player=player_slot, mv=move)
+        final_state = self._game_state_to_payload(result.final_state)
+        reaction = self._to_plain(getattr(result, "timeline", None)) or {}
+        outcome = self._to_plain(getattr(result, "outcome", None)) or {}
+        payload_bytes = len(json.dumps({"final_state": final_state, "timeline": reaction, "outcome": outcome}))
+        timeline_steps = 0
+        if isinstance(reaction, dict):
+            steps = reaction.get("steps")
+            if isinstance(steps, list):
+                timeline_steps = len(steps)
+        logger.info(
+            "engine.apply_move",
+            extra={
+                "player_slot": player_slot,
+                "move_row": row,
+                "move_col": col,
+                "payload_bytes": payload_bytes,
+                "timeline_steps": timeline_steps,
+            },
+        )
+        return final_state, reaction, outcome, payload_bytes, timeline_steps
+
+    def _game_state_to_payload(self, state: Any) -> dict[str, Any]:
+        if state is None:
+            raise ValueError("Engine returned an empty state")
+        if hasattr(state, "to_dict"):
+            return state.to_dict()
+        if hasattr(state, "to_json"):
+            return json.loads(state.to_json())
+        if is_dataclass(state):
+            return asdict(state)
+        if isinstance(state, dict):
+            return state
+        raise TypeError(f"Cannot serialize engine state of type {type(state)!r}")
+
+    def _game_state_from_payload(self, payload: dict[str, Any]):
+        game_state_cls = self.game_state_cls
+        if hasattr(game_state_cls, "from_dict"):
+            return game_state_cls.from_dict(payload)
+        if hasattr(game_state_cls, "from_json"):
+            return game_state_cls.from_json(json.dumps(payload))
+        return game_state_cls(**payload)
+
+    def _to_plain(self, value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {k: self._to_plain(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [self._to_plain(v) for v in value]
+        if hasattr(value, "to_dict"):
+            return value.to_dict()
+        if hasattr(value, "model_dump"):
+            return value.model_dump()
+        if is_dataclass(value):
+            return asdict(value)
+        return value
+
 
 def _build_game_service() -> GameService:
     settings = get_settings()
-    try:
-        import_module(settings.engine_module)
-        adapter: EngineAdapter = ChainReactionPyEngineAdapter(settings.engine_module)
-    except Exception as exc:  # pragma: no cover - defensive fallback
-        logger.warning("Falling back to FakeEngineAdapter: %s", exc)
-        adapter = FakeEngineAdapter()
-    return GameService(engine_adapter=adapter)
+    module = import_module(settings.engine_module)
+    return GameService(engine_module=module)
 
 
 game_service = _build_game_service()
