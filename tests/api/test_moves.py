@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from app.api import games as games_api
 from app.auth.models import User
 from app.games.events import GameEvent
+from app.games.exceptions import ReactionCycleError
 from app.games.models import GameStatus
 from app.games.schemas import MoveRequest
 
@@ -69,5 +70,28 @@ async def test_submit_move_rolls_back_and_hides_internal_errors(monkeypatch):
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Move could not be processed"
+    session.rollback.assert_awaited_once()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_move_rolls_back_controlled_reaction_error(monkeypatch):
+    game_id = uuid.uuid4()
+    session = SimpleNamespace(commit=AsyncMock(), rollback=AsyncMock())
+    monkeypatch.setattr(
+        games_api.game_service,
+        "submit_move",
+        AsyncMock(side_effect=ReactionCycleError()),
+    )
+
+    with pytest.raises(ReactionCycleError) as exc_info:
+        await games_api.submit_move(
+            game_id=game_id,
+            body=MoveRequest(cell=0, client_move_id="move-cycle"),
+            user=make_user(),
+            session=session,
+        )
+
+    assert exc_info.value.status_code == 422
     session.rollback.assert_awaited_once()
     session.commit.assert_not_awaited()

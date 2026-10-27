@@ -46,6 +46,8 @@ class MoveResponse(BaseModel):
     sequence: int
     turn_number: int
     player_slot: int
+    current_player_slot: Optional[int] = None
+    clocks: dict[str, int] = Field(default_factory=dict)
     reaction: dict
     final_state: dict
     status: GameStatus

@@ -243,14 +243,11 @@ async def _handle_move_message(
         ServerMessageType.MOVE_ACCEPTED if event.event_type == "move" else ServerMessageType.GAME_FINISHED
     )
     message = {"type": message_type, "payload": {"sequence": event.sequence, **event.payload}}
+    # The accepted-move payload already contains the authoritative final state,
+    # next player, outcome and clocks. Re-querying the database for a snapshot
+    # here added three remote round trips after every move. Full snapshots remain
+    # available on connect/reconnect and explicit join_game requests.
     await ws_manager.broadcast(str(game_id), message)
-    try:
-        snapshot = await _build_snapshot(session_factory, game_id)
-    except GameNotFoundError:
-        return
-    await ws_manager.broadcast(str(game_id), {"type": ServerMessageType.STATE_SNAPSHOT, "payload": snapshot})
-    if event.payload.get("status") == GameStatus.FINISHED.value:
-        await ws_manager.broadcast(str(game_id), {"type": ServerMessageType.GAME_FINISHED, "payload": snapshot})
 
 
 def _extract_token(websocket: WebSocket) -> str | None:

@@ -33,4 +33,28 @@ class MoveAlreadyProcessedError(HTTPException):
 
 class IllegalMoveError(HTTPException):
     def __init__(self, detail: str = "Illegal move"):
-        super().__init__(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+        super().__init__(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail)
+
+
+class ReactionCycleError(HTTPException):
+    def __init__(self):
+        super().__init__(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="This move creates a repeating reaction",
+        )
+
+
+class ReactionLimitExceededError(HTTPException):
+    def __init__(self):
+        super().__init__(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="This move exceeds the safe reaction processing limit",
+        )
+
+
+class ReactionProcessingError(HTTPException):
+    def __init__(self):
+        super().__init__(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="This move could not produce a safe final state",
+        )

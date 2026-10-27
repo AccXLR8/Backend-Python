@@ -32,6 +32,9 @@ from app.games.exceptions import (
     MoveAlreadyProcessedError,
     NotYourTurnError,
     PlayerNotInGameError,
+    ReactionCycleError,
+    ReactionLimitExceededError,
+    ReactionProcessingError,
 )
 from app.games.manager import game_lock_manager
 from app.games.models import FinishReason, GameConfig, GameStatus
@@ -58,6 +61,9 @@ class GameService:
         self.move_cls = move_cls
         self.game_state_cls = game_state_cls
         self.illegal_move_cls = illegal_cls
+        self.reaction_error_cls = getattr(module, "ReactionError", None)
+        self.reaction_cycle_cls = getattr(module, "ReactionCycle", None)
+        self.reaction_limit_cls = getattr(module, "ReactionLimitExceeded", None)
         self.monotonic_clock = MonotonicClock()
         self.settings = settings
 
@@ -176,25 +182,25 @@ class GameService:
         client_move_id: Optional[str] = None,
     ) -> GameEvent:
         repo = GameRepository(session)
-        participant_repo = ParticipantRepository(session)
         move_repo = MoveRepository(session)
         event_repo = GameEventRepository(session)
 
-        game = await repo.get(game_id)
-        if not game:
-            raise GameNotFoundError()
-        if game.status not in {GameStatus.ACTIVE, GameStatus.READY}:
-            raise GameFinishedError()
-        if not (game.player_1_id and game.player_2_id):
-            raise GameFinishedError()
-
         player_id = uuid.UUID(player.id)
-        player_slot = self._player_slot_for_user(game, player_id)
-
         lock = game_lock_manager.get_lock(str(game_id))
         game_finished = False
         move_event: GameEvent | None = None
         async with lock:
+            # This single query also takes a PostgreSQL row lock, preventing two
+            # workers from advancing the same game concurrently.
+            game, participants = await repo.get_with_participants_for_update(game_id)
+            if not game:
+                raise GameNotFoundError()
+            if game.status not in {GameStatus.ACTIVE, GameStatus.READY}:
+                raise GameFinishedError()
+            if not (game.player_1_id and game.player_2_id):
+                raise GameFinishedError()
+
+            player_slot = self._player_slot_for_user(game, player_id)
             if game.current_player_slot is None:
                 game.current_player_slot = 0
 
@@ -206,7 +212,6 @@ class GameService:
                 if existing_move:
                     raise MoveAlreadyProcessedError()
 
-            participants = await participant_repo.list_for_game(game_id)
             participant_lookup: Dict[int, db.GameParticipantModel] = {p.player_slot: p for p in participants}
             now_wall = datetime.now(timezone.utc)
             self._apply_elapsed_time(game, participant_lookup, now_wall)
@@ -246,8 +251,18 @@ class GameService:
                         col,
                     )
                 except Exception as exc:  # pragma: no cover - depends on engine runtime
-                    if self.illegal_move_cls and isinstance(exc, self.illegal_move_cls):
-                        raise IllegalMoveError(str(exc)) from exc
+                    controlled_error = self._map_engine_error(exc)
+                    if controlled_error is not None:
+                        logger.warning(
+                            "engine.apply_move.rejected",
+                            extra={
+                                "game_id": str(game_id),
+                                "player_slot": player_slot,
+                                "cell": cell,
+                                "error_type": type(exc).__name__,
+                            },
+                        )
+                        raise controlled_error from exc
                     logger.exception(
                         "engine.apply_move.failed",
                         extra={"game_id": str(game_id), "player_slot": player_slot, "cell": cell},
@@ -303,7 +318,10 @@ class GameService:
                 else:
                     game.active_clock_started_at = datetime.now(timezone.utc)
 
-                sequence = await move_repo.last_sequence(game_id) + 1
+                # Every accepted engine move increments turn_number exactly once,
+                # so it is also the persisted move/event sequence. Timeout events
+                # retain the fallback lookup because they do not advance a turn.
+                sequence = game.turn_number
                 move = db.MoveModel(
                     game_id=game_id,
                     player_slot=player_slot,
@@ -313,7 +331,7 @@ class GameService:
                     client_move_id=client_move_id,
                     time_remaining_ms=current_clock.remaining_time_ms,
                 )
-                await move_repo.create(move)
+                await move_repo.create(move, flush=False)
 
                 event_payload = {
                     "player_slot": player_slot,
@@ -323,7 +341,12 @@ class GameService:
                     "outcome": outcome,
                     "turn_number": game.turn_number,
                     "status": game.status.value,
+                    "current_player_slot": game.current_player_slot,
                     "time_remaining_ms": current_clock.remaining_time_ms,
+                    "clocks": {
+                        str(slot): participant.remaining_time_ms
+                        for slot, participant in participant_lookup.items()
+                    },
                 }
                 event = db.GameEventModel(
                     game_id=game_id,
@@ -331,7 +354,7 @@ class GameService:
                     event_type="move",
                     payload=event_payload,
                 )
-                await event_repo.append(event)
+                await event_repo.append(event, flush=False)
 
                 rss_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
                 logger.info(
@@ -433,7 +456,12 @@ class GameService:
             "turn_number": game.turn_number,
             "status": game.status.value,
             "finish_reason": FinishReason.TIMEOUT.value,
+            "current_player_slot": None,
             "time_remaining_ms": timed_out_clock.remaining_time_ms if timed_out_clock else 0,
+            "clocks": {
+                str(slot): participant.remaining_time_ms
+                for slot, participant in participant_lookup.items()
+            },
         }
         event = db.GameEventModel(
             game_id=game.id,
@@ -496,6 +524,18 @@ class GameService:
             },
         )
         return final_state, reaction, outcome, payload_bytes, timeline_steps
+
+    def _map_engine_error(self, error: Exception):
+        if self.illegal_move_cls and isinstance(error, self.illegal_move_cls):
+            detail = getattr(error, "detail", None) or str(error) or "Illegal move"
+            return IllegalMoveError(str(detail))
+        if self.reaction_cycle_cls and isinstance(error, self.reaction_cycle_cls):
+            return ReactionCycleError()
+        if self.reaction_limit_cls and isinstance(error, self.reaction_limit_cls):
+            return ReactionLimitExceededError()
+        if self.reaction_error_cls and isinstance(error, self.reaction_error_cls):
+            return ReactionProcessingError()
+        return None
 
     def _game_state_to_payload(self, state: Any) -> dict[str, Any]:
         if state is None:

@@ -100,6 +100,8 @@ async def submit_move(
         sequence=event.sequence,
         turn_number=event.payload.get("turn_number", 0),
         player_slot=event.payload.get("player_slot", 0),
+        current_player_slot=event.payload.get("current_player_slot"),
+        clocks=event.payload.get("clocks", {}),
         reaction=event.payload.get("reaction", {}),
         final_state=event.payload.get("final_state", {}),
         status=status_enum,

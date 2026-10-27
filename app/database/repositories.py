@@ -58,6 +58,27 @@ class GameRepository:
         result = await self.session.execute(select(db.GameModel).where(db.GameModel.id == game_id))
         return result.scalar_one_or_none()
 
+    async def get_with_participants_for_update(
+        self, game_id: uuid.UUID
+    ) -> tuple[db.GameModel | None, list[db.GameParticipantModel]]:
+        """Load and lock one game plus its participants in a single round trip."""
+        stmt = (
+            select(db.GameModel, db.GameParticipantModel)
+            .outerjoin(
+                db.GameParticipantModel,
+                db.GameParticipantModel.game_id == db.GameModel.id,
+            )
+            .where(db.GameModel.id == game_id)
+            .order_by(db.GameParticipantModel.player_slot)
+            .with_for_update(of=db.GameModel)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        if not rows:
+            return None, []
+        game = rows[0][0]
+        participants = [participant for _, participant in rows if participant is not None]
+        return game, participants
+
     async def list_games_for_user(self, user_id: uuid.UUID) -> Sequence[db.GameModel]:
         stmt = select(db.GameModel).where((db.GameModel.player_1_id == user_id) | (db.GameModel.player_2_id == user_id))
         result = await self.session.execute(stmt)
@@ -96,9 +117,10 @@ class MoveRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def create(self, move: db.MoveModel) -> db.MoveModel:
+    async def create(self, move: db.MoveModel, *, flush: bool = True) -> db.MoveModel:
         self.session.add(move)
-        await self.session.flush()
+        if flush:
+            await self.session.flush()
         return move
 
     async def last_sequence(self, game_id: uuid.UUID) -> int:
@@ -128,9 +150,10 @@ class GameEventRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
 
-    async def append(self, event: db.GameEventModel) -> db.GameEventModel:
+    async def append(self, event: db.GameEventModel, *, flush: bool = True) -> db.GameEventModel:
         self.session.add(event)
-        await self.session.flush()
+        if flush:
+            await self.session.flush()
         return event
 
     async def list_events(self, game_id: uuid.UUID) -> Sequence[db.GameEventModel]:
