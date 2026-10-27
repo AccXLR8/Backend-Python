@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+import logging
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi import status as http_status
@@ -20,6 +21,7 @@ from app.websocket.manager import ws_manager
 from app.websocket.protocol import ClientMessageType, MovePayload, ServerMessageType
 
 router = APIRouter()
+logger = logging.getLogger("app.websocket")
 
 WS_CODE_UNAUTHORIZED = 4401
 WS_CODE_FORBIDDEN = 4403
@@ -28,35 +30,48 @@ WS_CODE_NOT_FOUND = 4404
 
 @router.websocket("/ws/games/{game_id}")
 async def websocket_games(websocket: WebSocket, game_id: str):
+    logger.info("ws.connect.attempt", extra={"game_id": game_id})
     token = _extract_token(websocket)
     if not token:
+        logger.warning("ws.connect.missing_token", extra={"game_id": game_id})
         await websocket.close(code=WS_CODE_UNAUTHORIZED)
         return
 
     try:
         user = await auth_service.authenticate(token)
     except AuthenticationError:
+        logger.warning("ws.connect.auth_failed", extra={"game_id": game_id})
         await websocket.close(code=WS_CODE_UNAUTHORIZED)
         return
 
     try:
         game_uuid = uuid.UUID(game_id)
     except ValueError:
+        logger.warning("ws.connect.invalid_game_id", extra={"game_id": game_id})
         await websocket.close(code=WS_CODE_NOT_FOUND)
         return
 
     try:
         session_factory = Database.session_factory()
     except RuntimeError:
+        logger.exception("ws.connect.session_unavailable", extra={"game_id": game_id})
         await websocket.close(code=http_status.WS_1011_INTERNAL_ERROR)
         return
 
     player_slot = await _resolve_player_slot(session_factory, game_uuid, user.id)
     if player_slot is None:
+        logger.warning(
+            "ws.connect.player_forbidden",
+            extra={"game_id": str(game_uuid), "user_id": user.id},
+        )
         await websocket.close(code=WS_CODE_FORBIDDEN)
         return
 
     await websocket.accept()
+    logger.info(
+        "ws.connect.accepted",
+        extra={"game_id": str(game_uuid), "user_id": user.id, "player_slot": player_slot},
+    )
     await ws_manager.connect(websocket, user.id, str(game_uuid), player_slot)
 
     await websocket.send_json(
@@ -68,14 +83,39 @@ async def websocket_games(websocket: WebSocket, game_id: str):
     try:
         snapshot = await _build_snapshot(session_factory, game_uuid)
     except GameNotFoundError:
+        logger.warning(
+            "ws.snapshot.not_found",
+            extra={"game_id": str(game_uuid), "user_id": user.id},
+        )
         await websocket.close(code=WS_CODE_NOT_FOUND)
+        await ws_manager.disconnect(websocket, str(game_uuid))
+        return
+    except Exception:
+        logger.exception(
+            "ws.snapshot.failed",
+            extra={"game_id": str(game_uuid), "user_id": user.id},
+        )
+        await websocket.close(code=http_status.WS_1011_INTERNAL_ERROR)
         await ws_manager.disconnect(websocket, str(game_uuid))
         return
     await websocket.send_json({"type": ServerMessageType.STATE_SNAPSHOT, "payload": snapshot})
 
     try:
         while True:
-            data = await websocket.receive_json()
+            try:
+                data = await websocket.receive_json()
+            except ValueError:
+                logger.warning(
+                    "ws.receive.invalid_json",
+                    extra={"game_id": str(game_uuid), "user_id": user.id},
+                )
+                await websocket.send_json(
+                    {
+                        "type": ServerMessageType.ERROR,
+                        "payload": {"code": "invalid_json", "message": "Malformed JSON payload"},
+                    }
+                )
+                continue
             message_type = data.get("type")
             try:
                 client_message = ClientMessageType(message_type)
@@ -103,6 +143,18 @@ async def websocket_games(websocket: WebSocket, game_id: str):
                         }
                     )
                     continue
+                except Exception:
+                    logger.exception(
+                        "ws.snapshot.failed",
+                        extra={"game_id": str(game_uuid), "user_id": user.id},
+                    )
+                    await websocket.send_json(
+                        {
+                            "type": ServerMessageType.ERROR,
+                            "payload": {"code": "snapshot_error", "message": "Unable to build snapshot"},
+                        }
+                    )
+                    continue
                 await websocket.send_json({"type": ServerMessageType.STATE_SNAPSHOT, "payload": snapshot})
                 continue
 
@@ -117,7 +169,16 @@ async def websocket_games(websocket: WebSocket, game_id: str):
                 }
             )
     except WebSocketDisconnect:
-        pass
+        logger.info(
+            "ws.disconnect.client",
+            extra={"game_id": str(game_uuid), "user_id": user.id},
+        )
+    except Exception:
+        logger.exception(
+            "ws.loop.failed",
+            extra={"game_id": str(game_uuid), "user_id": user.id},
+        )
+        await websocket.close(code=http_status.WS_1011_INTERNAL_ERROR)
     finally:
         await ws_manager.disconnect(websocket, str(game_uuid))
 
@@ -223,7 +284,11 @@ async def _build_snapshot(session_factory, game_id: uuid.UUID) -> dict:
         active_slot = game.current_player_slot
         elapsed_ms = 0
         if active_slot is not None and game.active_clock_started_at and game.status in {GameStatus.READY, GameStatus.ACTIVE}:
-            elapsed_seconds = max(0.0, (datetime.utcnow() - game.active_clock_started_at).total_seconds())
+            now_utc = datetime.now(timezone.utc)
+            started_at = game.active_clock_started_at
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=timezone.utc)
+            elapsed_seconds = max(0.0, (now_utc - started_at).total_seconds())
             elapsed_ms = int(elapsed_seconds * 1000)
         players = []
         for participant in participants:

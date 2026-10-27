@@ -7,7 +7,10 @@ from app.auth.service import AuthenticationError, auth_service
 async def get_current_user(authorization: str = Header(...)) -> User:
     if not authorization:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header")
-    token = authorization.replace("Bearer", "").strip()
+    if authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    else:
+        token = authorization.strip()
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     try:
