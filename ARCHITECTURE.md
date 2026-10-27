@@ -6,11 +6,11 @@ Frontend  ⇄  FastAPI (HTTP / WS)
                   ▼
            GameService / GameManager
                   │
-        chainreaction_py (Python engine)
+        game_engine (vendored package)
 ```
 
 - **FastAPI** handles authentication, routing, WebSockets, matchmaking, persistence, and clocks.
-- **ChainReaction Py Engine** remains authoritative for game rules. `GameService` imports the `chainreaction_py` module (installed from the Python-Engine repository) and calls `new_game` / `apply_move` directly.
+- **Game engine** remains authoritative for game rules. Its source is vendored as the top-level `game_engine` package, and `GameService` calls `new_game` / `apply_move` directly.
 - **PostgreSQL (SQLAlchemy)** stores users, games, participants, moves, and events. Each state transition is persisted atomically before broadcasts.
 - **Redis** supports matchmaking queues, distributed locks, pub/sub, and ephemeral metadata (connections, presence, rate limits).
 - **Azure Blob Storage** can store large artifacts (replays, event archives) via `StorageService`.

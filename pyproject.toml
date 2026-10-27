@@ -23,7 +23,7 @@ dependencies = [
     "orjson>=3.10.3",
     "msgpack>=1.0.8",
     "pyinstrument>=4.6.2",
-    "chainreaction-py @ git+https://github.com/AccXLR8/Python-Engine.git@main",
+    "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
@@ -38,3 +38,6 @@ dev = [
 [build-system]
 requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*", "game_engine*"]

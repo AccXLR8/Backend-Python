@@ -9,7 +9,7 @@ This document summarizes everything required to run the Chain Reaction backend w
 | Requirement | Notes |
 | --- | --- |
 | **Python 3.11** | Only needed if you run outside Docker. |
-| **Git** | Needed to install the ChainReaction Py Engine from the Python-Engine repo. |
+| **Git** | Needed only to clone this backend repository. The engine is included. |
 | **Docker (optional)** | Recommended path: build the provided `Dockerfile` and run the container. |
 | **PostgreSQL 14+** | All persistent game data lives here. Use `asyncpg` DSN. |
 | **Redis 6+** | Matchmaking queues, distributed locks, connection metadata. |
@@ -29,7 +29,6 @@ DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/chainreaction
 REDIS_URL=redis://redis:6379/0
 AZURE_STORAGE_CONNECTION_STRING=<connection-string>
 AZURE_BLOB_CONTAINER=replays
-ENGINE_MODULE=chainreaction_py
 ALLOWED_ORIGINS=["https://your-frontend"]
 ```
 
@@ -39,33 +38,23 @@ Optional overrides: board size (`BOARD_WIDTH`, `BOARD_HEIGHT`), mini-board size 
 
 ## 3. Engine installation
 
-The backend loads the pure-Python engine from the `chainreaction_py` module. Install it from the [`Python-Engine`](https://github.com/AccXLR8/Python-Engine) repository.
+The pure-Python engine is included in this repository as the top-level `game_engine` package. Both local and Docker installs include it automatically with the backend:
 
-1. **Docker build (recommended)** – handled automatically by the provided `Dockerfile`, which clones the repo and runs `pip install /tmp/chainreaction-py`.
-2. **Manual install** – when running locally/CI:
+```bash
+python -m pip install -e .[dev]  # local development
+# or
+python -m pip install .          # production-style install
+```
 
-   ```bash
-   git clone https://github.com/AccXLR8/Python-Engine.git
-   python -m pip install Python-Engine
-   ```
-
-   Or use the direct URL:
-
-   ```bash
-   python -m pip install "git+https://github.com/AccXLR8/Python-Engine.git@main"
-   ```
-
-Ensure the module is present in every environment where the backend starts so the adapter can import `chainreaction_py`.
+No separate engine clone, GitHub credential, or engine installation step is required.
 
 ---
 
 ## 4. Docker workflow
 
 ```bash
-# Build image (override branch/commit via CHAIN_REACTION_REF if needed)
-docker build \
-  --build-arg CHAIN_REACTION_REF=main \
-  -t chain-reaction-backend .
+# Build the backend and its vendored engine
+docker build -t chain-reaction-backend .
 
 # (Solo VM) Run migrations
 # Assumes you've already created the `chainreaction` Docker network
@@ -86,7 +75,7 @@ docker run --name chainreaction-app \
   chain-reaction-backend
 ```
 
-The image installs system deps, the ChainReaction Py Engine (from Python-Engine), backend code, and starts `uvicorn app.main:app --host 0.0.0.0 --port 8080`.
+The image installs the backend together with its vendored ChainReaction engine and starts `uvicorn app.main:app --host 0.0.0.0 --port 8080`.
 
 ---
 

@@ -1,12 +1,12 @@
 # Chain Reaction FastAPI Backend
 
-This backend exposes HTTP and WebSocket APIs for the two-player Chain Reaction engine. It orchestrates matchmaking, clocks, persistence, and communication with the authoritative pure-Python engine shipped as the `chainreaction_py` library.
+This backend exposes HTTP and WebSocket APIs for the two-player Chain Reaction engine. It orchestrates matchmaking, clocks, persistence, and communication with the authoritative vendored `game_engine` package.
 
 ## Features
 
 - FastAPI application with modular routers
 - Health, game, matchmaking, and user endpoints
-- Pure-Python Chain Reaction engine bindings (via the `chainreaction_py` module) invoked directly from the backend
+- Vendored pure-Python Chain Reaction engine (`game_engine`) invoked directly from the backend
 - Built-in "standard" (8×8) and "mini" (5×5) matchmaking queues so players can pick their preferred board size
 - Chess-style per-player clocks (standard defaults to 5 minutes, mini to 10 minutes) that only run for the active player
 - Secure JWT authentication with built-in username/password registration + guest tokens
@@ -35,29 +35,18 @@ Run tests:
 pytest
 ```
 
-## Engine bindings
+## Game engine
 
-The backend loads the module named by `ENGINE_MODULE` (defaults to `python_engine`). Install the pure-Python engine from the [`Python-Engine`](https://github.com/AccXLR8/Python-Engine) repository:
+The authoritative pure-Python engine is vendored in the top-level `game_engine/` package. It is installed together with the backend by `pip install .`; no second repository checkout or GitHub dependency is required at build or runtime.
 
-```bash
-git clone https://github.com/AccXLR8/Python-Engine.git
-python -m pip install Python-Engine
-```
-
-You can also rely on a direct URL install:
-
-```bash
-python -m pip install "git+https://github.com/AccXLR8/Python-Engine.git@main"
-```
-
-Once the module is importable the FastAPI app calls `new_game` and `apply_move` directly. Make sure the engine is installed in every environment where the backend runs.
+`GameService` imports `game_engine` and calls `new_game` and `apply_move` directly. Engine documentation is preserved under `docs/game-engine/`, and its safeguard tests run with the backend test suite under `tests/engine/`.
 
 ## Database configuration & migrations
 
-Set `DATABASE_URL` to the Postgres instance you want to use. For the shared Neon instance provided for testing you can drop this straight into your `.env` (note the quotes to keep the `&` intact):
+Set `DATABASE_URL` to the Postgres instance you want to use. For Neon, keep the entire value quoted so `&` remains part of the URL, and URL-encode reserved characters in credentials:
 
 ```env
-DATABASE_URL="postgresql+asyncpg://neondb_owner:npg_WeRj7Jz3ByPX@ep-shiny-rain-b58w61ym-pooler.c-7.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+DATABASE_URL="postgresql+asyncpg://USER:URL_ENCODED_PASSWORD@HOST/DATABASE?ssl=require"
 ```
 
 The application automatically runs `alembic upgrade head` during startup (see `app/database/migrations_runner.py`), so connecting it to a fresh Neon database will create all tables without manual SQL. You can still run migrations yourself with `alembic upgrade head` if you prefer to manage them outside the app lifecycle.
@@ -94,11 +83,11 @@ Both variants use the same authentication + assignment flow; the mini endpoints 
 
 ## Environment Variables
 
-See `.env.example` for required configuration: database, Redis, Azure storage, engine module, etc. You can customize the standard board via `BOARD_WIDTH`/`BOARD_HEIGHT` and the mini board via `MINI_BOARD_WIDTH`/`MINI_BOARD_HEIGHT`, and you can tune the per-player clocks with `GAME_CLOCK_SECONDS` (standard queue) and `MINI_GAME_CLOCK_SECONDS` (mini queue).
+See `.env.example` for required configuration: database, Redis, Azure storage, board presets, and clocks. You can customize the standard board via `BOARD_WIDTH`/`BOARD_HEIGHT` and the mini board via `MINI_BOARD_WIDTH`/`MINI_BOARD_HEIGHT`, and you can tune the per-player clocks with `GAME_CLOCK_SECONDS` (standard queue) and `MINI_GAME_CLOCK_SECONDS` (mini queue).
 
 ## Development Notes
 
-- The ChainReaction Py Engine is injected via `ENGINE_MODULE`. Install `python_engine` from the Python-Engine repository (or another compatible module) before starting the API service.
+- The vendored `game_engine` package is the source of truth for game rules; update it and its tests in this repository.
 - Alembic migrations live in `app/database/migrations`; the server runs `alembic upgrade head` automatically during startup, so any new database is initialized without manual SQL.
 - Redis keys are centralized under `app/redis/keys.py`.
 

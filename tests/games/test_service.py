@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 import uuid
 
 import pytest
-import python_engine
+import game_engine
 
 from app.auth.models import User
 from app.database.repositories import GameEventRepository, GameRepository, MoveRepository
@@ -21,7 +21,7 @@ from app.games.service import GameService
 
 
 def build_service() -> GameService:
-    return GameService(engine_module=python_engine)
+    return GameService(engine_api=game_engine)
 
 
 def test_engine_state_round_trip_and_move_application():
@@ -41,9 +41,9 @@ def test_engine_state_round_trip_and_move_application():
     assert timeline_steps == 0
 
 
-def test_python_engine_illegal_move_type_is_detected():
+def test_game_engine_illegal_move_type_is_detected():
     service = build_service()
-    assert service.illegal_move_cls is python_engine.IllegalMove
+    assert service.illegal_move_cls is game_engine.IllegalMove
 
 
 def test_new_reaction_errors_map_to_controlled_http_errors():
@@ -64,7 +64,7 @@ def test_new_reaction_errors_map_to_controlled_http_errors():
     assert isinstance(service._map_engine_error(ReactionCycle()), ReactionCycleError)
     assert isinstance(service._map_engine_error(ReactionLimitExceeded()), ReactionLimitExceededError)
     assert isinstance(service._map_engine_error(ReactionError()), ReactionProcessingError)
-    assert isinstance(service._map_engine_error(python_engine.IllegalMove.out_of_bounds()), IllegalMoveError)
+    assert isinstance(service._map_engine_error(game_engine.IllegalMove.out_of_bounds()), IllegalMoveError)
 
 
 def test_reaction_error_does_not_mutate_stored_state(monkeypatch):
@@ -74,7 +74,7 @@ def test_reaction_error_does_not_mutate_stored_state(monkeypatch):
     service = build_service()
     state = service._create_new_game_state_payload(5, 5, [0, 1])
     original_state = service._to_plain(state)
-    monkeypatch.setattr(service.engine_module, "apply_move", lambda *_args, **_kwargs: (_ for _ in ()).throw(ReactionCycle()))
+    monkeypatch.setattr(service.engine, "apply_move", lambda *_args, **_kwargs: (_ for _ in ()).throw(ReactionCycle()))
 
     with pytest.raises(ReactionCycle):
         service._apply_move_payloads(state, player_slot=0, row=0, col=0)

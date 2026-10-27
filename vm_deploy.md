@@ -219,7 +219,7 @@ For a completely clean build:
 docker build --no-cache -t chain-reaction-backend .
 ```
 
-The Dockerfile installs the ChainReaction Py Engine automatically (cloning the Python-Engine repository during the build).
+The Dockerfile installs the vendored `game_engine` package together with the backend; no external engine clone is required.
 
 This is one of the reasons I would **keep your existing Dockerfile** rather than manually installing the engine plus Python dependencies on the VM.
 
@@ -244,7 +244,6 @@ docker run -d \
   -e REDIS_URL='redis://chainreaction-redis:6379/0' \
   -e AZURE_STORAGE_CONNECTION_STRING='<YOUR_AZURE_CONNECTION_STRING>' \
   -e AZURE_BLOB_CONTAINER=replays \
-  -e ENGINE_MODULE=chainreaction_py \
   -e GAME_BOARD_WIDTH=8 \
   -e GAME_BOARD_HEIGHT=8 \
   -e MINI_BOARD_WIDTH=5 \

@@ -2,21 +2,9 @@ FROM python:3.11-slim AS builder
 
 WORKDIR /build
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential git \
-    && rm -rf /var/lib/apt/lists/*
-
-ARG CHAIN_REACTION_PY_REPO=https://github.com/AccXLR8/Python-Engine.git
-ARG CHAIN_REACTION_PY_REF=main
-
-RUN pip install --no-cache-dir --upgrade pip \
-    && git clone --depth 1 --branch "${CHAIN_REACTION_PY_REF}" "${CHAIN_REACTION_PY_REPO}" /tmp/chainreaction-py \
-    && pip install --no-cache-dir /tmp/chainreaction-py \
-    && rm -rf /tmp/chainreaction-py
-
 COPY . .
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --no-build-isolation .
 
 
 FROM python:3.11-slim AS runtime

@@ -7,12 +7,13 @@ import resource
 import uuid
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
-from importlib import import_module
 from types import ModuleType
 from typing import Any, Dict, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import game_engine
+from game_engine.board import Board
 from app.auth.models import User
 from app.config.settings import get_settings
 from app.database import models as db
@@ -44,10 +45,10 @@ logger = logging.getLogger(__name__)
 
 
 class GameService:
-    def __init__(self, engine_module: Optional[ModuleType] = None):
+    def __init__(self, engine_api: Optional[ModuleType] = None):
         settings = get_settings()
-        module_name = settings.engine_module
-        module = engine_module or import_module(module_name)
+        module = engine_api or game_engine
+        module_name = module.__name__
         move_cls = getattr(module, "Move", None)
         game_state_cls = getattr(module, "GameState", None)
         illegal_cls = getattr(module, "IllegalMove", None) or getattr(module, "IllegalMoveError", None)
@@ -57,7 +58,7 @@ class GameService:
                 illegal_cls = getattr(errors_mod, "IllegalMove", None) or getattr(errors_mod, "IllegalMoveError", None)
         if move_cls is None or game_state_cls is None:
             raise RuntimeError(f"{module_name} is missing required Move or GameState exports")
-        self.engine_module = module
+        self.engine = module
         self.move_cls = move_cls
         self.game_state_cls = game_state_cls
         self.illegal_move_cls = illegal_cls
@@ -481,7 +482,7 @@ class GameService:
         return GameEvent(sequence=sequence, event_type="timeout", payload=payload)
 
     def _create_new_game_state_payload(self, width: int, height: int, players: list[int]) -> dict[str, Any]:
-        state = self.engine_module.new_game(width=width, height=height, players=list(players))
+        state = self.engine.new_game(width=width, height=height, players=list(players))
         payload = self._game_state_to_payload(state)
         logger.info(
             "engine.new_game_state",
@@ -503,7 +504,7 @@ class GameService:
     ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], int, int]:
         cr_state = self._game_state_from_payload(state_payload)
         move = self.move_cls(row=row, col=col)
-        result = self.engine_module.apply_move(cr_state, player=player_slot, mv=move)
+        result = self.engine.apply_move(cr_state, player=player_slot, mv=move)
         final_state = self._game_state_to_payload(result.final_state)
         reaction = self._to_plain(getattr(result, "timeline", None)) or {}
         outcome = self._to_plain(getattr(result, "outcome", None)) or {}
@@ -557,7 +558,7 @@ class GameService:
         if hasattr(game_state_cls, "from_json"):
             return game_state_cls.from_json(json.dumps(payload))
 
-        # python_engine 0.1.x serializes with GameState.to_dict(), but does not
+        # The game engine serializes with GameState.to_dict(), but does not
         # provide a matching deserializer. Rebuild its native objects here.
         board_payload = payload.get("board")
         players_payload = payload.get("players")
@@ -565,9 +566,7 @@ class GameService:
         if not isinstance(board_payload, dict) or not isinstance(players_payload, list):
             raise ValueError("Stored engine state is missing board or player data")
 
-        board_module = import_module(f"{self.engine_module.__name__}.board")
-        board_cls = getattr(board_module, "Board")
-        board = board_cls.new(
+        board = Board.new(
             width=int(board_payload["width"]),
             height=int(board_payload["height"]),
         )
@@ -581,8 +580,8 @@ class GameService:
                 board.owners[row_index, col_index] = int(cell["owner"])
                 board.orbs[row_index, col_index] = int(cell["orb_count"])
 
-        player_cls = getattr(self.engine_module, "PlayerState")
-        status_cls = getattr(self.engine_module, "GameStatus")
+        player_cls = getattr(self.engine, "PlayerState")
+        status_cls = getattr(self.engine, "GameStatus")
         players = [
             player_cls(
                 id=int(player["id"]),
@@ -621,9 +620,7 @@ class GameService:
 
 
 def _build_game_service() -> GameService:
-    settings = get_settings()
-    module = import_module(settings.engine_module)
-    return GameService(engine_module=module)
+    return GameService()
 
 
 game_service = _build_game_service()
