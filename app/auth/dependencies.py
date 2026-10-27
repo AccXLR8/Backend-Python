@@ -1,10 +1,12 @@
+from typing import Optional
+
 from fastapi import Header, HTTPException, status
 
 from app.auth.models import User
 from app.auth.service import AuthenticationError, auth_service
 
 
-async def get_current_user(authorization: str = Header(...)) -> User:
+async def get_current_user(authorization: Optional[str] = Header(default=None)) -> User:
     if not authorization:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing Authorization header")
     if authorization.lower().startswith("bearer "):

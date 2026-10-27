@@ -6,7 +6,7 @@ import logging
 import resource
 import uuid
 from dataclasses import asdict, is_dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from importlib import import_module
 from types import ModuleType
 from typing import Any, Dict, Optional
@@ -47,13 +47,13 @@ class GameService:
         module = engine_module or import_module(module_name)
         move_cls = getattr(module, "Move", None)
         game_state_cls = getattr(module, "GameState", None)
-        illegal_cls = getattr(module, "IllegalMoveError", None)
+        illegal_cls = getattr(module, "IllegalMove", None) or getattr(module, "IllegalMoveError", None)
         if illegal_cls is None:
             errors_mod = getattr(module, "errors", None)
             if errors_mod is not None:
-                illegal_cls = getattr(errors_mod, "IllegalMoveError", None)
+                illegal_cls = getattr(errors_mod, "IllegalMove", None) or getattr(errors_mod, "IllegalMoveError", None)
         if move_cls is None or game_state_cls is None:
-            raise RuntimeError("chainreaction_py module is missing required exports")
+            raise RuntimeError(f"{module_name} is missing required Move or GameState exports")
         self.engine_module = module
         self.move_cls = move_cls
         self.game_state_cls = game_state_cls
@@ -161,7 +161,7 @@ class GameService:
         if game.player_1_id and game.player_2_id:
             game.status = GameStatus.READY
             game.current_player_slot = 0
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
             game.started_at = timestamp
             game.active_clock_started_at = timestamp
 
@@ -208,7 +208,7 @@ class GameService:
 
             participants = await participant_repo.list_for_game(game_id)
             participant_lookup: Dict[int, db.GameParticipantModel] = {p.player_slot: p for p in participants}
-            now_wall = datetime.utcnow()
+            now_wall = datetime.now(timezone.utc)
             self._apply_elapsed_time(game, participant_lookup, now_wall)
 
             current_clock = participant_lookup.get(player_slot)
@@ -226,6 +226,8 @@ class GameService:
                 game_finished = True
             else:
                 move_start = self.monotonic_clock.now()
+                if cell < 0 or cell >= game.board_width * game.board_height:
+                    raise IllegalMoveError("Cell is outside the board")
                 row = cell // game.board_width
                 col = cell % game.board_width
 
@@ -246,6 +248,10 @@ class GameService:
                 except Exception as exc:  # pragma: no cover - depends on engine runtime
                     if self.illegal_move_cls and isinstance(exc, self.illegal_move_cls):
                         raise IllegalMoveError(str(exc)) from exc
+                    logger.exception(
+                        "engine.apply_move.failed",
+                        extra={"game_id": str(game_id), "player_slot": player_slot, "cell": cell},
+                    )
                     raise
 
                 processing_elapsed_ms = int((self.monotonic_clock.now() - move_start) * 1000)
@@ -254,7 +260,12 @@ class GameService:
 
                 next_player = final_state_payload.get("current_player")
                 if next_player is None:
-                    next_player = 1 - player_slot
+                    current_index = int(final_state_payload.get("current_player_index", 0))
+                    final_players = final_state_payload.get("players") or []
+                    if 0 <= current_index < len(final_players):
+                        next_player = int(final_players[current_index]["id"])
+                    else:
+                        next_player = 1 - player_slot
 
                 final_state_size = len(json.dumps(final_state_payload)) if final_state_payload else 0
                 reaction_size = len(json.dumps(reaction_payload)) if reaction_payload else 0
@@ -275,7 +286,7 @@ class GameService:
                     status_kind = None
                 if status_kind and status_kind.lower() == "won":
                     game.status = GameStatus.FINISHED
-                    game.finished_at = datetime.utcnow()
+                    game.finished_at = datetime.now(timezone.utc)
                     game.finish_reason = FinishReason.NORMAL.value
                     winner_slot = outcome.get("winner")
                     if winner_slot == 0:
@@ -290,7 +301,7 @@ class GameService:
                     game.current_player_slot = None
                     game.active_clock_started_at = None
                 else:
-                    game.active_clock_started_at = datetime.utcnow()
+                    game.active_clock_started_at = datetime.now(timezone.utc)
 
                 sequence = await move_repo.last_sequence(game_id) + 1
                 move = db.MoveModel(
@@ -370,6 +381,10 @@ class GameService:
         if started_at is None:
             game.active_clock_started_at = now
             return
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
         elapsed_seconds = max(0.0, (now - started_at).total_seconds())
         elapsed_ms = int(elapsed_seconds * 1000)
         if elapsed_ms == 0:
@@ -389,7 +404,7 @@ class GameService:
         event_repo: GameEventRepository,
     ) -> GameEvent:
         winner_slot = 1 - timed_out_slot
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         game.status = GameStatus.FINISHED
         game.finished_at = now
         game.finish_reason = FinishReason.TIMEOUT.value
@@ -501,7 +516,53 @@ class GameService:
             return game_state_cls.from_dict(payload)
         if hasattr(game_state_cls, "from_json"):
             return game_state_cls.from_json(json.dumps(payload))
-        return game_state_cls(**payload)
+
+        # python_engine 0.1.x serializes with GameState.to_dict(), but does not
+        # provide a matching deserializer. Rebuild its native objects here.
+        board_payload = payload.get("board")
+        players_payload = payload.get("players")
+        status_payload = payload.get("status") or {"kind": "active"}
+        if not isinstance(board_payload, dict) or not isinstance(players_payload, list):
+            raise ValueError("Stored engine state is missing board or player data")
+
+        board_module = import_module(f"{self.engine_module.__name__}.board")
+        board_cls = getattr(board_module, "Board")
+        board = board_cls.new(
+            width=int(board_payload["width"]),
+            height=int(board_payload["height"]),
+        )
+        cells = board_payload.get("cells") or []
+        if len(cells) != board.height or any(not isinstance(row, list) or len(row) != board.width for row in cells):
+            raise ValueError("Stored engine board dimensions do not match its cells")
+        for row_index, row in enumerate(cells):
+            for col_index, cell in enumerate(row):
+                if cell is None:
+                    continue
+                board.owners[row_index, col_index] = int(cell["owner"])
+                board.orbs[row_index, col_index] = int(cell["orb_count"])
+
+        player_cls = getattr(self.engine_module, "PlayerState")
+        status_cls = getattr(self.engine_module, "GameStatus")
+        players = [
+            player_cls(
+                id=int(player["id"]),
+                eliminated=bool(player.get("eliminated", False)),
+                has_moved=bool(player.get("has_moved", False)),
+            )
+            for player in players_payload
+        ]
+        status = status_cls(
+            kind=str(status_payload.get("kind", "active")),
+            winner=status_payload.get("winner"),
+            eliminated=list(status_payload.get("eliminated") or []),
+        )
+        return game_state_cls(
+            board=board,
+            players=players,
+            current_player_index=int(payload.get("current_player_index", 0)),
+            turn_number=int(payload.get("turn_number", 0)),
+            status=status,
+        )
 
     def _to_plain(self, value: Any) -> Any:
         if value is None or isinstance(value, (str, int, float, bool)):

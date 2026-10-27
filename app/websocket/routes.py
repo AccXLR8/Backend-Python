@@ -168,10 +168,15 @@ async def websocket_games(websocket: WebSocket, game_id: str):
                     "payload": {"code": "not_supported", "message": f"{client_message.value} not supported"},
                 }
             )
-    except WebSocketDisconnect:
+    except WebSocketDisconnect as exc:
         logger.info(
             "ws.disconnect.client",
-            extra={"game_id": str(game_uuid), "user_id": user.id},
+            extra={
+                "game_id": str(game_uuid),
+                "user_id": user.id,
+                "close_code": exc.code,
+                "close_reason": exc.reason or "",
+            },
         )
     except Exception:
         logger.exception(
@@ -220,12 +225,16 @@ async def _handle_move_message(
                 }
             )
             return
-        except Exception as exc:  # pragma: no cover - defensive
+        except Exception:  # pragma: no cover - defensive
             await session.rollback()
+            logger.exception(
+                "ws.move.failed",
+                extra={"game_id": str(game_id), "user_id": user.id, "cell": payload.cell},
+            )
             await websocket.send_json(
                 {
                     "type": ServerMessageType.ERROR,
-                    "payload": {"code": "internal_error", "message": str(exc)},
+                    "payload": {"code": "internal_error", "message": "Move could not be processed"},
                 }
             )
             return

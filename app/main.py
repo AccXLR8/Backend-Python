@@ -104,10 +104,11 @@ async def _shutdown_resources(resources: dict[str, bool]) -> None:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    debug_enabled = settings.debug and settings.app_env.lower() not in {"production", "prod"}
     app = FastAPI(
         title="Chain Reaction Backend",
         version="0.1.0",
-        debug=settings.debug,
+        debug=debug_enabled,
         lifespan=lifespan,
     )
 

@@ -56,6 +56,10 @@ class WebSocketManager:
             try:
                 await conn.websocket.send_json(message)
             except Exception:
+                logger.exception(
+                    "ws.broadcast.failed",
+                    extra={"game_id": game_id, "user_id": conn.user_id},
+                )
                 stale.append(conn.websocket)
         if stale:
             async with self._lock:
@@ -82,6 +86,10 @@ class WebSocketManager:
                 await conn.websocket.send_json(message)
                 delivered += 1
             except Exception:
+                logger.exception(
+                    "ws.send_to_player.failed",
+                    extra={"game_id": game_id, "user_id": conn.user_id, "player_slot": player_slot},
+                )
                 stale.append(conn.websocket)
         if stale:
             async with self._lock:

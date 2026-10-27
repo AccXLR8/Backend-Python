@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,6 +25,7 @@ from app.games.schemas import (
 from app.games.service import game_service
 
 router = APIRouter()
+logger = logging.getLogger("app.games.api")
 
 
 @router.post("", response_model=GameResponse, status_code=status.HTTP_201_CREATED)
@@ -70,14 +72,28 @@ async def submit_move(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    event = await game_service.submit_move(
-        session=session,
-        game_id=game_id,
-        player=user,
-        cell=body.cell,
-        client_move_id=body.client_move_id,
-    )
-    await session.commit()
+    try:
+        event = await game_service.submit_move(
+            session=session,
+            game_id=game_id,
+            player=user,
+            cell=body.cell,
+            client_move_id=body.client_move_id,
+        )
+        await session.commit()
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "move.request.failed",
+            extra={"game_id": str(game_id), "user_id": user.id, "cell": body.cell},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Move could not be processed",
+        )
     status_value = event.payload.get("status", GameStatus.ACTIVE.value)
     status_enum = GameStatus(status_value)
     return MoveResponse(
