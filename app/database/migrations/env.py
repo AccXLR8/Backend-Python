@@ -17,8 +17,10 @@ from app.database import models
 # access to the values within the .ini file in use.
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
+    # Preserve loggers created by Uvicorn/FastAPI when migrations run inside
+    # application startup. CLI migrations still receive the Alembic formatter.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
@@ -29,7 +31,13 @@ target_metadata = models.Base.metadata
 
 
 def _get_url() -> str:
-    url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+    # Programmatic startup supplies an already normalized synchronous URL.
+    # The environment/config fallbacks remain for the Alembic CLI.
+    url = (
+        config.attributes.get("database_url")
+        or os.getenv("DATABASE_URL")
+        or config.get_main_option("sqlalchemy.url")
+    )
     if url.startswith("postgresql+asyncpg"):
         return url.replace("+asyncpg", "", 1)
     if url.startswith("postgresql+psycopg"):  # psycopg3 async DSN

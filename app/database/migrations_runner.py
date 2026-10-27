@@ -43,7 +43,10 @@ def run_migrations_once() -> None:
     config_path = Path(__file__).resolve().parents[2] / "alembic.ini"
     alembic_cfg = Config(str(config_path))
     alembic_cfg.set_main_option("script_location", "app/database/migrations")
-    alembic_cfg.set_main_option("sqlalchemy.url", _sync_url(settings.database_url))
+    migration_url = _sync_url(settings.database_url)
+    alembic_cfg.set_main_option("sqlalchemy.url", migration_url)
+    alembic_cfg.attributes["database_url"] = migration_url
+    alembic_cfg.attributes["configure_logger"] = False
 
     start = time.perf_counter()
     logger.info("Running Alembic migrations (target=head)...")

@@ -30,28 +30,28 @@ async def lifespan(app: FastAPI):
     resources = {"db": False, "redis": False}
     startup_complete = False
 
-    settings = await _run_stage(1, "Loading configuration", get_settings)
-    logger.info("Configuration loaded for env='%s'", settings.app_env)
-
-    await _run_stage(2, "Connecting to PostgreSQL", lambda: Database.connect(settings.database_url))
-    resources["db"] = True
-
-    await _run_stage(3, "Verifying PostgreSQL connectivity", Database.verify_connection)
-
-    await _run_stage(4, "Running database migrations", run_migrations_once)
-
-    await _run_stage(5, "Connecting to Redis", lambda: RedisClient.connect(settings.redis_url))
-    resources["redis"] = True
-
-    logger.info("STARTUP COMPLETE - application is ready to serve requests")
-    startup_complete = True
     try:
+        settings = await _run_stage(1, "Loading configuration", get_settings)
+        logger.info("Configuration loaded for env='%s'", settings.app_env)
+
+        await _run_stage(2, "Connecting to PostgreSQL", lambda: Database.connect(settings.database_url))
+        resources["db"] = True
+
+        await _run_stage(3, "Verifying PostgreSQL connectivity", Database.verify_connection)
+
+        await _run_stage(4, "Running database migrations", run_migrations_once)
+
+        await _run_stage(5, "Connecting to Redis", lambda: RedisClient.connect(settings.redis_url))
+        resources["redis"] = True
+
+        logger.info("STARTUP COMPLETE - application is ready to serve requests")
+        startup_complete = True
         yield
     except Exception:
         if startup_complete:
             logger.exception("Unhandled exception during application runtime")
         else:
-            logger.error("Application startup failed (see previous logs)")
+            logger.error("Application startup failed; cleaning up initialized resources")
         raise
     finally:
         await _shutdown_resources(resources)
