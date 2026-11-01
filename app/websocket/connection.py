@@ -9,6 +9,7 @@ from fastapi import WebSocket
 
 @dataclass
 class WebSocketConnection:
+    connection_id: str
     websocket: WebSocket
     user_id: str
     game_id: str

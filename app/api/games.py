@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
+import secrets
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -13,6 +16,7 @@ from app.database import models as db
 from app.database.repositories import GameEventRepository, GameRepository, MoveRepository, ParticipantRepository
 from app.database.session import get_session
 from app.games.models import FinishReason, GameConfig, GameStatus
+from app.games.exceptions import PlayerNotInGameError
 from app.games.schemas import (
     CreateGameRequest,
     GameHistoryResponse,
@@ -21,8 +25,13 @@ from app.games.schemas import (
     JoinGameRequest,
     MoveRequest,
     MoveResponse,
+    WebSocketTicketResponse,
 )
 from app.games.service import game_service
+from app.rate_limit import enforce_move_rate_limit, enforce_websocket_ticket_rate_limit
+from app.redis.client import RedisClient
+from app.redis.keys import websocket_ticket_key
+from app.websocket.manager import ws_manager
 
 router = APIRouter()
 logger = logging.getLogger("app.games.api")
@@ -57,11 +66,16 @@ async def join_game(
 
 
 @router.get("/{game_id}", response_model=GameResponse)
-async def get_game(game_id: uuid.UUID, session: AsyncSession = Depends(get_session)):
+async def get_game(
+    game_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     repo = GameRepository(session)
     game = await repo.get(game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+    await _require_game_participant(session, game_id, user)
     return await _serialize_game(session, game)
 
 
@@ -73,6 +87,7 @@ async def submit_move(
     session: AsyncSession = Depends(get_session),
 ):
     try:
+        await enforce_move_rate_limit(user.id)
         event = await game_service.submit_move(
             session=session,
             game_id=game_id,
@@ -108,12 +123,45 @@ async def submit_move(
     )
 
 
+@router.post(
+    "/{game_id}/ws-ticket",
+    response_model=WebSocketTicketResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a single-use WebSocket ticket",
+    description=(
+        "Returns a credential that expires after 30 seconds and can be used once. "
+        "Browser clients should connect with WebSocket subprotocols `chainreaction-v1` and `ticket.<ticket>`."
+    ),
+)
+async def create_websocket_ticket(
+    game_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Create a one-use, 30-second WebSocket credential for browser clients."""
+    await enforce_websocket_ticket_rate_limit(user.id)
+    await _require_game_participant(session, game_id, user)
+    ticket = secrets.token_urlsafe(32)
+    ticket_hash = hashlib.sha256(ticket.encode("utf-8")).hexdigest()
+    await RedisClient.instance().set(
+        websocket_ticket_key(ticket_hash),
+        json.dumps({"user_id": user.id, "game_id": str(game_id)}),
+        ex=30,
+    )
+    return WebSocketTicketResponse(ticket=ticket)
+
+
 @router.get("/{game_id}/history", response_model=GameHistoryResponse)
-async def game_history(game_id: uuid.UUID, session: AsyncSession = Depends(get_session)):
+async def game_history(
+    game_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
     repo = GameRepository(session)
     game = await repo.get(game_id)
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
+    await _require_game_participant(session, game_id, user)
 
     move_repo = MoveRepository(session)
     move_rows = await move_repo.list_for_game(game_id)
@@ -141,6 +189,12 @@ async def game_history(game_id: uuid.UUID, session: AsyncSession = Depends(get_s
     return GameHistoryResponse(game_id=game_id, moves=serialized_moves, result=result)
 
 
+async def _require_game_participant(session: AsyncSession, game_id: uuid.UUID, user: User) -> None:
+    participant = await ParticipantRepository(session).get(game_id, uuid.UUID(user.id))
+    if participant is None:
+        raise PlayerNotInGameError()
+
+
 async def _serialize_game(session: AsyncSession, game: db.GameModel) -> GameResponse:
     participant_repo = ParticipantRepository(session)
     participants = await participant_repo.list_for_game(game.id)
@@ -151,21 +205,37 @@ async def _serialize_game(session: AsyncSession, game: db.GameModel) -> GameResp
         users_by_id = {user.id: user for user in result.scalars().all()}
 
     players = []
+    selections = {}
+    if user_ids:
+        selection_rows = (await session.execute(select(db.UserOrbSkinSelectionModel).where(
+            db.UserOrbSkinSelectionModel.user_id.in_(user_ids)))).scalars().all()
+        selections = {row.user_id: row.skin_id for row in selection_rows}
     for participant in sorted(participants, key=lambda p: p.player_slot):
         user = users_by_id.get(participant.user_id)
+        try:
+            connected = await ws_manager.has_player_connection(str(game.id), str(participant.user_id))
+        except Exception:
+            logger.exception(
+                "game.presence.read_failed",
+                extra={"game_id": str(game.id), "user_id": str(participant.user_id)},
+            )
+            connected = participant.connected
         players.append(
             GamePlayerSchema(
                 user_id=participant.user_id,
                 username=user.username if user else "unknown",
                 player_slot=participant.player_slot,
-                connected=participant.connected,
+                connected=connected,
                 time_remaining_ms=participant.remaining_time_ms,
+                orb_skin_id=selections.get(participant.user_id, "classic"),
+                nationality=(getattr(user, "nationality", None) or "global") if user else "global",
             )
         )
 
     return GameResponse(
         id=game.id,
         status=game.status,
+        is_ranked=game.is_ranked,
         players=players,
         turn_number=game.turn_number,
         current_player_slot=game.current_player_slot,

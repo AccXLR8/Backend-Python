@@ -239,6 +239,7 @@ docker run -d \
   -e DEBUG=false \
   -e LOG_LEVEL=INFO \
   -e SECRET_KEY='<STRONG_RANDOM_SECRET>' \
+  -e GOOGLE_CLIENT_ID='<GOOGLE_OAUTH_WEB_CLIENT_ID>' \
   -e ACCESS_TOKEN_EXPIRE_MINUTES=60 \
   -e DATABASE_URL='postgresql+asyncpg://chainreaction:<YOUR_DB_PASSWORD>@chainreaction-postgres:5432/chainreaction' \
   -e REDIS_URL='redis://chainreaction-redis:6379/0' \

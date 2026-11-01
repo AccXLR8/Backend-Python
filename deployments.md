@@ -25,6 +25,7 @@ Create a `.env` file (or set env vars in your orchestrator) containing at least:
 ```
 APP_ENV=production
 SECRET_KEY=<hs256-signing-key>
+GOOGLE_CLIENT_ID=<google-oauth-web-client-id>
 DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/chainreaction
 REDIS_URL=redis://redis:6379/0
 AZURE_STORAGE_CONNECTION_STRING=<connection-string>
@@ -118,7 +119,7 @@ alembic upgrade head  # uses alembic.ini
 - **Auth**: `/api/auth/register`, `/api/auth/login`, `/api/auth/guest` for manual credentials and guest tokens. All responses return `access_token` you pass to other endpoints/websockets.
 - **Matchmaking**: `/api/matchmaking/join`, `/api/matchmaking/status`, `/api/matchmaking/leave` for the 8×8 queue plus `/api/matchmaking/mini/*` for the dedicated 5×5 queue (both auto-pair players and store assignments in Redis).
 - **Gameplay REST**: `/api/games` (create/join/get/history, authenticated with `Authorization: Bearer <JWT>`).
-- **WebSocket**: `ws://<host>/ws/games/{game_id}?token=<JWT>` for real-time play. Messages follow `ServerMessageType` / `ClientMessageType` enums in `app/websocket/protocol.py`.
+- **WebSocket**: For browser clients, call `POST /api/games/{game_id}/ws-ticket` with the normal bearer token, then connect to `ws://<host>/ws/games/{game_id}` using WebSocket subprotocols `chainreaction-v1` and `ticket.<ticket>`. Tickets expire after 30 seconds and are single-use. Non-browser clients may continue sending a bearer token in the `Authorization` header. Do not put JWTs or tickets in the URL. Messages follow `ServerMessageType` / `ClientMessageType` enums in `app/websocket/protocol.py`; clients should send `ping` messages at least once every 30 seconds to keep presence fresh.
 
 ---
 

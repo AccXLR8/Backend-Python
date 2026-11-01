@@ -6,11 +6,13 @@ import logging
 import resource
 import uuid
 from dataclasses import asdict, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import ModuleType
 from typing import Any, Dict, Optional
 
+from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 import game_engine
 from game_engine.board import Board
@@ -39,6 +41,7 @@ from app.games.exceptions import (
 )
 from app.games.manager import game_lock_manager
 from app.games.models import FinishReason, GameConfig, GameStatus
+from app.profiles.service import profile_service
 from app.utils.time import MonotonicClock
 
 logger = logging.getLogger(__name__)
@@ -68,12 +71,32 @@ class GameService:
         self.monotonic_clock = MonotonicClock()
         self.settings = settings
 
-    async def create_game(self, session: AsyncSession, creator: User, config: Optional[GameConfig] = None) -> db.GameModel:
+    async def create_game(
+        self,
+        session: AsyncSession,
+        creator: User,
+        config: Optional[GameConfig] = None,
+        *,
+        is_ranked: bool = False,
+        matchmaking_mode: str | None = None,
+    ) -> db.GameModel:
         config = config or GameConfig(
             board_width=self.settings.board_width,
             board_height=self.settings.board_height,
             initial_time_ms=self.settings.game_clock_ms,
         )
+        if (
+            config.board_width < 3
+            or config.board_height < 3
+            or config.board_width > 16
+            or config.board_height > 16
+            or config.initial_time_ms < 60_000
+            or config.initial_time_ms > 3_600_000
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="Game dimensions must be 3–16 cells per side and clock must be 60–3600 seconds",
+            )
         user_repo = UserRepository(session)
         creator_id = uuid.UUID(creator.id)
         await user_repo.get_or_create(creator_id, creator.username)
@@ -89,6 +112,8 @@ class GameService:
         participant_repo = ParticipantRepository(session)
         game = db.GameModel(
             status=GameStatus.WAITING,
+            is_ranked=is_ranked,
+            matchmaking_mode=matchmaking_mode or ("ranked" if is_ranked else None),
             board_width=config.board_width,
             board_height=config.board_height,
             initial_clock_ms=config.initial_time_ms,
@@ -118,7 +143,9 @@ class GameService:
         participant_repo = ParticipantRepository(session)
         user_repo = UserRepository(session)
 
-        game = await repo.get(game_id)
+        # Locking the parent row serializes all join attempts for this game,
+        # including requests handled by different API workers.
+        game = await repo.get_for_update(game_id)
         if not game:
             raise GameNotFoundError()
 
@@ -128,6 +155,8 @@ class GameService:
         existing = await participant_repo.get(game_id, user_id)
         if existing:
             return game
+        if game.status != GameStatus.WAITING:
+            raise GameFullError()
 
         slot: Optional[int] = None
         if preferred_slot in {0, 1}:
@@ -171,6 +200,7 @@ class GameService:
             timestamp = datetime.now(timezone.utc)
             game.started_at = timestamp
             game.active_clock_started_at = timestamp
+            game.turn_deadline_at = timestamp + timedelta(milliseconds=game.initial_clock_ms)
 
         return game
 
@@ -223,6 +253,7 @@ class GameService:
 
             if current_clock.remaining_time_ms <= 0:
                 move_event = await self._handle_timeout(
+                    session=session,
                     game=game,
                     participant_lookup=participant_lookup,
                     timed_out_slot=player_slot,
@@ -274,6 +305,12 @@ class GameService:
                 if processing_elapsed_ms > 0:
                     current_clock.remaining_time_ms = max(0, current_clock.remaining_time_ms - processing_elapsed_ms)
 
+                await profile_service.record_longest_chain(
+                    session,
+                    player_id,
+                    len(reaction_payload.get("steps", [])),
+                )
+
                 next_player = final_state_payload.get("current_player")
                 if next_player is None:
                     current_index = int(final_state_payload.get("current_player_index", 0))
@@ -316,8 +353,16 @@ class GameService:
                 if game.status == GameStatus.FINISHED:
                     game.current_player_slot = None
                     game.active_clock_started_at = None
+                    game.turn_deadline_at = None
+                    await profile_service.apply_finished_game(session, game, participants)
                 else:
                     game.active_clock_started_at = datetime.now(timezone.utc)
+                    next_clock = participant_lookup.get(game.current_player_slot)
+                    game.turn_deadline_at = (
+                        game.active_clock_started_at + timedelta(milliseconds=next_clock.remaining_time_ms)
+                        if next_clock is not None
+                        else None
+                    )
 
                 # Every accepted engine move increments turn_number exactly once,
                 # so it is also the persisted move/event sequence. Timeout events
@@ -385,6 +430,82 @@ class GameService:
 
         return move_event
 
+    async def forfeit_disconnected_player(
+        self,
+        session: AsyncSession,
+        game_id: uuid.UUID,
+        disconnected_user_id: uuid.UUID,
+    ) -> GameEvent | None:
+        """Persist presence and apply the ranked disconnect loss if the game is live."""
+        repo = GameRepository(session)
+        event_repo = GameEventRepository(session)
+        move_repo = MoveRepository(session)
+        lock = game_lock_manager.get_lock(str(game_id))
+        async with lock:
+            game, participants = await repo.get_with_participants_for_update(game_id)
+            if game is None:
+                return None
+            disconnected = next((p for p in participants if p.user_id == disconnected_user_id), None)
+            if disconnected is None:
+                return None
+            disconnected.connected = False
+            if not game.is_ranked or game.status not in {GameStatus.READY, GameStatus.ACTIVE}:
+                return None
+
+            if game.player_1_id == disconnected_user_id:
+                winner_id, winner_slot = game.player_2_id, 1
+            elif game.player_2_id == disconnected_user_id:
+                winner_id, winner_slot = game.player_1_id, 0
+            else:
+                return None
+            if winner_id is None:
+                return None
+
+            now = datetime.now(timezone.utc)
+            game.status = GameStatus.FINISHED
+            game.finished_at = now
+            game.finish_reason = FinishReason.DISCONNECT.value
+            game.winner_id = winner_id
+            game.loser_id = disconnected_user_id
+            game.current_player_slot = None
+            game.active_clock_started_at = None
+            game.turn_deadline_at = None
+            await profile_service.apply_finished_game(session, game, participants)
+
+            sequence = await move_repo.last_sequence(game.id) + 1
+            payload = {
+                "player_slot": disconnected.player_slot,
+                "status": game.status.value,
+                "finish_reason": FinishReason.DISCONNECT.value,
+                "current_player_slot": None,
+                "outcome": {
+                    "status": {"kind": "won"},
+                    "winner": winner_slot,
+                    "reason": FinishReason.DISCONNECT.value,
+                },
+                "turn_number": game.turn_number,
+            }
+            await event_repo.append(db.GameEventModel(
+                game_id=game.id,
+                sequence=sequence,
+                event_type="disconnect",
+                payload=payload,
+            ))
+            game_lock_manager.release(str(game_id))
+            return GameEvent(sequence=sequence, event_type="disconnect", payload=payload)
+
+    async def set_player_connected(
+        self,
+        session: AsyncSession,
+        game_id: uuid.UUID,
+        user_id: uuid.UUID,
+        connected: bool,
+    ) -> None:
+        participant = await ParticipantRepository(session).get(game_id, user_id)
+        if participant is None:
+            raise PlayerNotInGameError()
+        participant.connected = connected
+
     def _player_slot_for_user(self, game: db.GameModel, user_id: uuid.UUID) -> int:
         if game.player_1_id == user_id:
             return 0
@@ -419,8 +540,63 @@ class GameService:
         clock.remaining_time_ms = max(0, clock.remaining_time_ms - elapsed_ms)
         game.active_clock_started_at = now
 
+    async def expire_due_games(
+        self, session: AsyncSession, *, limit: int = 100
+    ) -> list[tuple[uuid.UUID, GameEvent]]:
+        """Finish games whose active player's persisted clock has expired."""
+        now = datetime.now(timezone.utc)
+        stmt = (
+            select(db.GameModel)
+            .where(
+                db.GameModel.status.in_([db.GameStatus.READY, db.GameStatus.ACTIVE]),
+                db.GameModel.turn_deadline_at.is_not(None),
+                db.GameModel.turn_deadline_at <= now,
+            )
+            .order_by(db.GameModel.turn_deadline_at)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        games = (await session.execute(stmt)).scalars().all()
+        expired: list[tuple[uuid.UUID, GameEvent]] = []
+        for game in games:
+            participants = (await session.execute(
+                select(db.GameParticipantModel).where(db.GameParticipantModel.game_id == game.id)
+            )).scalars().all()
+            participant_lookup = {participant.player_slot: participant for participant in participants}
+            slot = game.current_player_slot
+            clock = participant_lookup.get(slot) if slot is not None else None
+            if clock is None:
+                logger.error("game.clock.deadline_missing_participant", extra={"game_id": str(game.id)})
+                game.status = GameStatus.ABANDONED
+                game.finished_at = now
+                game.finish_reason = FinishReason.ABANDONED.value
+                game.current_player_slot = None
+                game.active_clock_started_at = None
+                game.turn_deadline_at = None
+                game_lock_manager.release(str(game.id))
+                continue
+
+            self._apply_elapsed_time(game, participant_lookup, now)
+            if clock.remaining_time_ms > 0:
+                # Repair a stale deadline rather than timing out a player early.
+                game.turn_deadline_at = now + timedelta(milliseconds=clock.remaining_time_ms)
+                continue
+
+            event = await self._handle_timeout(
+                session=session,
+                game=game,
+                participant_lookup=participant_lookup,
+                timed_out_slot=slot,
+                move_repo=MoveRepository(session),
+                event_repo=GameEventRepository(session),
+            )
+            expired.append((game.id, event))
+            game_lock_manager.release(str(game.id))
+        return expired
+
     async def _handle_timeout(
         self,
+        session: AsyncSession,
         game: db.GameModel,
         participant_lookup: Dict[int, db.GameParticipantModel],
         timed_out_slot: int,
@@ -434,6 +610,7 @@ class GameService:
         game.finish_reason = FinishReason.TIMEOUT.value
         game.current_player_slot = None
         game.active_clock_started_at = None
+        game.turn_deadline_at = None
         timed_out_clock = participant_lookup.get(timed_out_slot)
         if timed_out_clock:
             timed_out_clock.remaining_time_ms = 0
@@ -443,6 +620,12 @@ class GameService:
         elif winner_slot == 1:
             game.winner_id = game.player_2_id
             game.loser_id = game.player_1_id
+
+        await profile_service.apply_finished_game(
+            session,
+            game,
+            list(participant_lookup.values()),
+        )
 
         sequence = await move_repo.last_sequence(game.id) + 1
         payload = {

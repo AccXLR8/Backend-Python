@@ -22,6 +22,7 @@ class FinishReason(str, enum.Enum):
     TIMEOUT = "TIMEOUT"
     ABANDONED = "ABANDONED"
     ERROR = "ERROR"
+    DISCONNECT = "DISCONNECT"
 
 
 @dataclass

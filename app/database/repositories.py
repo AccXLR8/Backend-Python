@@ -7,7 +7,6 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import models as db
-from app.games.models import GameStatus
 
 
 class UserRepository:
@@ -28,6 +27,12 @@ class UserRepository:
         result = await self.session.execute(select(db.UserModel).where(db.UserModel.username == username))
         return result.scalar_one_or_none()
 
+    async def get_by_google_subject(self, google_subject: str) -> db.UserModel | None:
+        result = await self.session.execute(
+            select(db.UserModel).where(db.UserModel.google_subject == google_subject)
+        )
+        return result.scalar_one_or_none()
+
     async def get_registered_by_username(self, username: str) -> db.UserModel | None:
         result = await self.session.execute(
             select(db.UserModel).where(db.UserModel.username == username, db.UserModel.is_guest.is_(False))
@@ -44,6 +49,17 @@ class UserRepository:
         result = await self.session.execute(select(db.UserModel).where(db.UserModel.id == user_id))
         return result.scalar_one_or_none()
 
+    async def lock_many(self, user_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, db.UserModel]:
+        if not user_ids:
+            return {}
+        result = await self.session.execute(
+            select(db.UserModel)
+            .where(db.UserModel.id.in_(user_ids))
+            .order_by(db.UserModel.id)
+            .with_for_update()
+        )
+        return {user.id: user for user in result.scalars().all()}
+
 
 class GameRepository:
     def __init__(self, session: AsyncSession):
@@ -56,6 +72,12 @@ class GameRepository:
 
     async def get(self, game_id: uuid.UUID) -> db.GameModel | None:
         result = await self.session.execute(select(db.GameModel).where(db.GameModel.id == game_id))
+        return result.scalar_one_or_none()
+
+    async def get_for_update(self, game_id: uuid.UUID) -> db.GameModel | None:
+        result = await self.session.execute(
+            select(db.GameModel).where(db.GameModel.id == game_id).with_for_update()
+        )
         return result.scalar_one_or_none()
 
     async def get_with_participants_for_update(
@@ -83,6 +105,61 @@ class GameRepository:
         stmt = select(db.GameModel).where((db.GameModel.player_1_id == user_id) | (db.GameModel.player_2_id == user_id))
         result = await self.session.execute(stmt)
         return result.scalars().all()
+
+    async def find_active_match_for_user(
+        self, user_id: uuid.UUID, mode: str | None = None
+    ) -> db.GameModel | None:
+        conditions = [
+            db.GameModel.matchmaking_mode.is_not(None),
+            db.GameModel.status.in_([db.GameStatus.READY, db.GameStatus.ACTIVE]),
+            (db.GameModel.player_1_id == user_id) | (db.GameModel.player_2_id == user_id),
+        ]
+        if mode is not None:
+            conditions.append(db.GameModel.matchmaking_mode == mode)
+        stmt = (
+            select(db.GameModel)
+            .where(*conditions)
+            .order_by(db.GameModel.created_at.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def find_active_match_for_pair(
+        self, user_ids: tuple[uuid.UUID, uuid.UUID], mode: str
+    ) -> db.GameModel | None:
+        first, second = user_ids
+        roster_matches = (
+            ((db.GameModel.player_1_id == first) & (db.GameModel.player_2_id == second))
+            | ((db.GameModel.player_1_id == second) & (db.GameModel.player_2_id == first))
+        )
+        stmt = (
+            select(db.GameModel)
+            .where(
+                db.GameModel.matchmaking_mode == mode,
+                db.GameModel.status.in_([db.GameStatus.READY, db.GameStatus.ACTIVE]),
+                roster_matches,
+            )
+            .order_by(db.GameModel.created_at.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def find_active_match_for_users(
+        self, user_ids: Sequence[uuid.UUID]
+    ) -> db.GameModel | None:
+        if not user_ids:
+            return None
+        stmt = (
+            select(db.GameModel)
+            .where(
+                db.GameModel.matchmaking_mode.is_not(None),
+                db.GameModel.status.in_([db.GameStatus.READY, db.GameStatus.ACTIVE]),
+                (db.GameModel.player_1_id.in_(user_ids) | db.GameModel.player_2_id.in_(user_ids)),
+            )
+            .order_by(db.GameModel.created_at.desc())
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def update_state(self, game_id: uuid.UUID, **kwargs) -> None:
         await self.session.execute(update(db.GameModel).where(db.GameModel.id == game_id).values(**kwargs))

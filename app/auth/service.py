@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
+from google.auth.exceptions import GoogleAuthError
+from google.auth.transport.requests import Request as GoogleRequest
+from google.oauth2 import id_token as google_id_token
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -13,7 +18,15 @@ from app.database import models as db
 
 
 class AuthenticationError(Exception):
-    """Raised when a token cannot be validated."""
+    """Raised when a backend session token cannot be validated."""
+
+
+class GoogleAuthenticationError(Exception):
+    """Raised when a Google ID token cannot be validated."""
+
+
+class GoogleAuthConfigurationError(Exception):
+    """Raised when Google sign-in is not configured on the backend."""
 
 
 class AuthService:
@@ -33,7 +46,35 @@ class AuthService:
             is_active=payload.get("is_active", True),
             is_bot=payload.get("is_bot", False),
             is_guest=payload.get("is_guest", False),
+            nationality=payload.get("nationality", "global"),
         )
+
+    async def verify_google_credential(self, credential: str) -> dict[str, Any]:
+        settings = get_settings()
+        if not settings.google_client_id:
+            raise GoogleAuthConfigurationError("Google sign-in is not configured")
+
+        verify = partial(
+            google_id_token.verify_oauth2_token,
+            credential,
+            GoogleRequest(),
+            settings.google_client_id,
+        )
+        try:
+            claims = await asyncio.to_thread(verify)
+        except (GoogleAuthError, ValueError) as exc:
+            raise GoogleAuthenticationError("Invalid Google credential") from exc
+
+        subject = claims.get("sub")
+        email = claims.get("email")
+        if not subject or not email or claims.get("email_verified") is not True:
+            raise GoogleAuthenticationError("Google account email is not verified")
+
+        return {
+            "subject": str(subject),
+            "email": str(email).strip().lower(),
+            "name": str(claims.get("name") or "").strip(),
+        }
 
     def hash_password(self, password: str) -> str:
         return self._password_context.hash(password)
@@ -53,16 +94,19 @@ class AuthService:
             user_id = str(user.id)
             username = user.username
             is_guest = user.is_guest
+            nationality = getattr(user, "nationality", "global") or "global"
         else:
             user_id = user.id
             username = user.username
             is_guest = getattr(user, "is_guest", False)
+            nationality = getattr(user, "nationality", "global") or "global"
         now = datetime.utcnow()
         expire = now + self._token_ttl
         return {
             "sub": user_id,
             "username": username,
             "is_guest": is_guest,
+            "nationality": nationality,
             "is_active": True,
             "iat": int(now.timestamp()),
             "exp": int(expire.timestamp()),
@@ -96,6 +140,7 @@ class AuthService:
             created_at=model.created_at,
             updated_at=model.updated_at,
             is_guest=model.is_guest,
+            nationality=getattr(model, "nationality", "global") or "global",
         )
 
 

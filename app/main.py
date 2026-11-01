@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import time
@@ -20,6 +21,9 @@ from app.api.router import api_router
 from app.redis.client import RedisClient
 from app.database.session import Database
 from app.database.migrations_runner import run_migrations_once
+from app.games.service import game_service
+from app.websocket.manager import ws_manager
+from app.websocket.protocol import ServerMessageType
 
 logger = logging.getLogger("app.startup")
 STARTUP_STAGE_COUNT = 5
@@ -29,6 +33,7 @@ STARTUP_STAGE_COUNT = 5
 async def lifespan(app: FastAPI):
     resources = {"db": False, "redis": False}
     startup_complete = False
+    clock_worker: asyncio.Task | None = None
 
     try:
         settings = await _run_stage(1, "Loading configuration", get_settings)
@@ -43,6 +48,9 @@ async def lifespan(app: FastAPI):
 
         await _run_stage(5, "Connecting to Redis", lambda: RedisClient.connect(settings.redis_url))
         resources["redis"] = True
+        await ws_manager.start_pubsub()
+
+        clock_worker = asyncio.create_task(_clock_expiry_worker(), name="game-clock-expiry")
 
         logger.info("STARTUP COMPLETE - application is ready to serve requests")
         startup_complete = True
@@ -54,8 +62,38 @@ async def lifespan(app: FastAPI):
             logger.error("Application startup failed; cleaning up initialized resources")
         raise
     finally:
+        if clock_worker is not None:
+            clock_worker.cancel()
+            try:
+                await clock_worker
+            except asyncio.CancelledError:
+                pass
+        await ws_manager.stop_pubsub()
         await _shutdown_resources(resources)
         logger.info("Application shutdown complete")
+
+
+async def _clock_expiry_worker() -> None:
+    """Resolve expired turns from persisted deadlines, including no-show games."""
+    while True:
+        try:
+            session_factory = Database.session_factory()
+            async with session_factory() as session:
+                expired = await game_service.expire_due_games(session)
+                await session.commit()
+            for game_id, event in expired:
+                await ws_manager.broadcast(
+                    str(game_id),
+                    {
+                        "type": ServerMessageType.GAME_FINISHED,
+                        "payload": {"sequence": event.sequence, **event.payload},
+                    },
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("game.clock.expiry_worker_failed")
+        await asyncio.sleep(1)
 
 
 async def _run_stage(stage_number: int, description: str, func: Callable[[], Any]) -> Any:

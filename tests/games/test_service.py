@@ -143,6 +143,11 @@ async def test_submit_move_uses_combined_load_and_defers_inserts(monkeypatch):
     monkeypatch.setattr(MoveRepository, "create", create_move)
     monkeypatch.setattr(MoveRepository, "last_sequence", last_sequence)
     monkeypatch.setattr(GameEventRepository, "append", append_event)
+    record_chain = AsyncMock()
+    finalize_stats = AsyncMock()
+    monkeypatch.setattr("app.games.service.profile_service.record_longest_chain", record_chain)
+    monkeypatch.setattr("app.games.service.profile_service.apply_finished_game", finalize_stats)
+    session = SimpleNamespace()
 
     user = User(
         id=str(player_1_id),
@@ -151,7 +156,7 @@ async def test_submit_move_uses_combined_load_and_defers_inserts(monkeypatch):
         updated_at=now,
     )
     event = await service.submit_move(
-        session=SimpleNamespace(),
+        session=session,
         game_id=game.id,
         player=user,
         cell=0,
@@ -166,3 +171,78 @@ async def test_submit_move_uses_combined_load_and_defers_inserts(monkeypatch):
     assert append_event.await_args.kwargs["flush"] is False
     assert event.payload["current_player_slot"] == 1
     assert event.payload["clocks"]["0"] <= 600_000
+    record_chain.assert_awaited_once_with(session, player_1_id, 0)
+    finalize_stats.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_winning_move_applies_profile_statistics_in_same_transaction(monkeypatch):
+    service = build_service()
+    player_1_id = uuid.uuid4()
+    player_2_id = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    game = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=GameStatus.ACTIVE,
+        player_1_id=player_1_id,
+        player_2_id=player_2_id,
+        current_player_slot=0,
+        active_clock_started_at=now,
+        board_width=5,
+        board_height=5,
+        latest_state={"board": {}},
+        turn_number=4,
+        winner_id=None,
+        loser_id=None,
+        finished_at=None,
+        finish_reason=None,
+        stats_applied_at=None,
+    )
+    participants = [
+        SimpleNamespace(user_id=player_1_id, player_slot=0, remaining_time_ms=500_000),
+        SimpleNamespace(user_id=player_2_id, player_slot=1, remaining_time_ms=500_000),
+    ]
+    final_state = {
+        "turn_number": 5,
+        "current_player_index": 0,
+        "players": [{"id": 0}, {"id": 1}],
+        "status": {"kind": "won", "winner": 0, "eliminated": [1]},
+        "board": {"width": 5, "height": 5, "cells": []},
+    }
+    monkeypatch.setattr(
+        service,
+        "_apply_move_payloads",
+        lambda *_args: (
+            final_state,
+            {"placement": {"cell": 0, "player": 0}, "steps": [{}, {}]},
+            {"status": {"kind": "won"}, "winner": 0, "losers": [1]},
+            100,
+            2,
+        ),
+    )
+    monkeypatch.setattr(
+        GameRepository,
+        "get_with_participants_for_update",
+        AsyncMock(return_value=(game, participants)),
+    )
+    monkeypatch.setattr(MoveRepository, "create", AsyncMock(side_effect=lambda move, **_: move))
+    monkeypatch.setattr(GameEventRepository, "append", AsyncMock(side_effect=lambda event, **_: event))
+    record_chain = AsyncMock()
+    finalize_stats = AsyncMock()
+    monkeypatch.setattr("app.games.service.profile_service.record_longest_chain", record_chain)
+    monkeypatch.setattr("app.games.service.profile_service.apply_finished_game", finalize_stats)
+    session = SimpleNamespace()
+    user = User(
+        id=str(player_1_id),
+        username="winner",
+        created_at=now,
+        updated_at=now,
+    )
+
+    event = await service.submit_move(session, game.id, user, cell=0)
+
+    assert event.payload["status"] == GameStatus.FINISHED.value
+    assert game.winner_id == player_1_id
+    assert game.loser_id == player_2_id
+    record_chain.assert_awaited_once_with(session, player_1_id, 2)
+    finalize_stats.assert_awaited_once_with(session, game, participants)

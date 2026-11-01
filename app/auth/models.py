@@ -15,3 +15,4 @@ class User:
     is_active: bool = True
     is_bot: bool = False
     is_guest: bool = False
+    nationality: str = "global"
