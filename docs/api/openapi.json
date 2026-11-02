@@ -226,6 +226,66 @@
         }
       }
     },
+    "/api/auth/change-password": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Change Password",
+        "description": "Change a registered password account's password after checking the old one.",
+        "operationId": "change_password_api_auth_change_password_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PasswordChangeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/games": {
       "post": {
         "tags": [
@@ -1437,6 +1497,29 @@
         ],
         "title": "AvatarSchema"
       },
+      "ChangePasswordRequest": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Current Password"
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "New Password"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "ChangePasswordRequest"
+      },
       "CreateGameRequest": {
         "properties": {
           "board_width": {
@@ -1636,6 +1719,7 @@
             "title": "Credential"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "credential"
@@ -1657,6 +1741,7 @@
             "title": "Username"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "title": "GuestRequest"
       },
@@ -1701,10 +1786,11 @@
           "password": {
             "type": "string",
             "maxLength": 128,
-            "minLength": 6,
+            "minLength": 1,
             "title": "Password"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "username",
@@ -1904,6 +1990,20 @@
         ],
         "title": "OrbSkinSchema"
       },
+      "PasswordChangeResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "password_changed",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "PasswordChangeResponse"
+      },
       "PlayerStatsSchema": {
         "properties": {
           "matches_played": {
@@ -2059,6 +2159,7 @@
             "title": "Nationality"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "title": "ProfileUpdateRequest"
       },
@@ -2066,14 +2167,14 @@
         "properties": {
           "username": {
             "type": "string",
-            "maxLength": 64,
+            "maxLength": 24,
             "minLength": 3,
             "title": "Username"
           },
           "password": {
             "type": "string",
             "maxLength": 128,
-            "minLength": 6,
+            "minLength": 8,
             "title": "Password"
           },
           "nationality": {
@@ -2084,6 +2185,7 @@
             "default": "global"
           }
         },
+        "additionalProperties": false,
         "type": "object",
         "required": [
           "username",

@@ -5,19 +5,32 @@ import random
 import re
 import string
 import uuid
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, constr, field_validator
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependencies import get_current_user
+from app.auth.models import User
+from app.auth.schemas import (
+    ChangePasswordRequest,
+    GoogleSignInRequest,
+    GuestRequest,
+    LoginRequest,
+    RegisterRequest,
+)
 from app.auth.service import (
     GoogleAuthConfigurationError,
     GoogleAuthenticationError,
     auth_service,
 )
 from app.database.repositories import UserRepository
+from app.database import models as db
 from app.database.session import get_session
 from app.profiles.service import profile_service
+from app.rate_limit import enforce_auth_attempt_limit, enforce_password_change_limit
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -35,40 +48,17 @@ class TokenResponse(BaseModel):
     user: TokenUser
 
 
-class RegisterRequest(BaseModel):
-    username: constr(min_length=3, max_length=64)
-    password: constr(min_length=6, max_length=128)
-    nationality: str = Field(default="global", min_length=2, max_length=8)
-
-    @field_validator("nationality")
-    @classmethod
-    def validate_nationality(cls, value: str) -> str:
-        normalized = value.strip().upper()
-        if normalized == "GLOBAL":
-            return "global"
-        if len(normalized) != 2 or not normalized.isalpha() or not normalized.isascii():
-            raise ValueError('Nationality must be an ISO alpha-2 country code or "global"')
-        return normalized
-
-
-class LoginRequest(BaseModel):
-    username: constr(min_length=3, max_length=64)
-    password: constr(min_length=6, max_length=128)
-
-
-class GuestRequest(BaseModel):
-    username: str | None = Field(default=None, max_length=64)
-
-
-class GoogleSignInRequest(BaseModel):
-    credential: str = Field(min_length=100, max_length=8192)
+class PasswordChangeResponse(BaseModel):
+    status: Literal["password_changed"]
 
 
 @router.post("/google", response_model=TokenResponse)
 async def google_sign_in(
     body: GoogleSignInRequest,
     session: AsyncSession = Depends(get_session),
+    request: Request = None,
 ):
+    await enforce_auth_attempt_limit(request, "google")
     try:
         identity = await auth_service.verify_google_credential(body.credential)
     except GoogleAuthConfigurationError as exc:
@@ -84,65 +74,98 @@ async def google_sign_in(
 
     repo = UserRepository(session)
     user = await repo.get_by_google_subject(identity["subject"])
-    if user is None:
-        username = await _google_username(repo, identity)
-        user = await repo.create(
-            username=username,
-            password_hash=None,
-            google_subject=identity["subject"],
-            email=identity["email"],
-            is_guest=False,
-        )
-        profile_service.create_records_for_new_user(
-            session,
-            user.id,
-            created_at=user.created_at,
-        )
-    else:
-        # Keep the game-facing username stable while refreshing mutable profile data.
-        user.email = identity["email"]
-
-    await session.commit()
+    try:
+        if user is None:
+            username = await _google_username(repo, identity)
+            user = await repo.create(
+                username=username,
+                password_hash=None,
+                google_subject=identity["subject"],
+                email=identity["email"],
+                is_guest=False,
+            )
+            profile_service.create_records_for_new_user(
+                session,
+                user.id,
+                created_at=user.created_at,
+            )
+        else:
+            # Keep the game-facing username stable while refreshing mutable profile data.
+            user.email = identity["email"]
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        # A simultaneous callback for the same Google subject is safe to retry:
+        # use the account committed by the request that won the unique constraint.
+        user = await repo.get_by_google_subject(identity["subject"])
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Could not create the Google account; please try again",
+            ) from exc
     token = auth_service.create_access_token(user=user)
     return TokenResponse(access_token=token, user=_serialize_user(user))
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register_user(body: RegisterRequest, session: AsyncSession = Depends(get_session)):
+async def register_user(
+    body: RegisterRequest,
+    session: AsyncSession = Depends(get_session),
+    request: Request = None,
+):
+    await enforce_auth_attempt_limit(request, "register")
     repo = UserRepository(session)
     existing = await repo.get_registered_by_username(body.username)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken")
 
     password_hash = auth_service.hash_password(body.password)
-    user = await repo.create(
-        username=body.username,
-        password_hash=password_hash,
-        is_guest=False,
-        nationality=body.nationality,
-    )
-    profile_service.create_records_for_new_user(session, user.id, created_at=user.created_at)
-    await session.commit()
+    try:
+        user = await repo.create(
+            username=body.username,
+            password_hash=password_hash,
+            is_guest=False,
+            nationality=body.nationality,
+        )
+        profile_service.create_records_for_new_user(session, user.id, created_at=user.created_at)
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if await repo.get_registered_by_username(body.username):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken") from exc
+        raise
 
     token = auth_service.create_access_token(user=user)
     return TokenResponse(access_token=token, user=_serialize_user(user))
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login_user(body: LoginRequest, session: AsyncSession = Depends(get_session)):
+async def login_user(
+    body: LoginRequest,
+    session: AsyncSession = Depends(get_session),
+    request: Request = None,
+):
+    await enforce_auth_attempt_limit(request, "login")
     repo = UserRepository(session)
     user = await repo.get_registered_by_username(body.username)
     if not user or not auth_service.verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    if user.is_guest:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Guest accounts cannot log in with passwords")
+
+    if auth_service.password_hash_needs_upgrade(user.password_hash):
+        user.password_hash = auth_service.hash_password(body.password)
+        await session.commit()
 
     token = auth_service.create_access_token(user=user)
     return TokenResponse(access_token=token, user=_serialize_user(user))
 
 
 @router.post("/guest", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def guest_user(body: GuestRequest | None = None, session: AsyncSession = Depends(get_session)):
+async def guest_user(
+    body: GuestRequest | None = None,
+    session: AsyncSession = Depends(get_session),
+    request: Request = None,
+):
+    await enforce_auth_attempt_limit(request, "guest")
     repo = UserRepository(session)
     username = _generate_guest_username(body.username if body else None)
     user = await repo.create(username=username, password_hash=None, is_guest=True)
@@ -152,9 +175,34 @@ async def guest_user(body: GuestRequest | None = None, session: AsyncSession = D
     return TokenResponse(access_token=token, user=_serialize_user(user))
 
 
+@router.post("/change-password", response_model=PasswordChangeResponse)
+async def change_password(
+    body: ChangePasswordRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Change a registered password account's password after checking the old one."""
+    await enforce_password_change_limit(user.id)
+    db_user = await session.get(db.UserModel, uuid.UUID(user.id))
+    if db_user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid account session")
+    if db_user.is_guest:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Guest accounts do not have passwords")
+    if not auth_service.verify_password(body.current_password, db_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect")
+    if auth_service.verify_password(body.new_password, db_user.password_hash):
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Choose a different password")
+
+    db_user.password_hash = auth_service.hash_password(body.new_password)
+    await session.commit()
+    return PasswordChangeResponse(status="password_changed")
+
+
 async def _google_username(repo: UserRepository, identity: dict[str, str]) -> str:
     source = identity.get("name") or identity["email"].split("@", 1)[0]
     base = re.sub(r"[^A-Za-z0-9_-]+", "-", source).strip("-_") or "player"
+    if len(base) < 3:
+        base = f"{base}-p"
     base = base[:24]
     if await repo.get_registered_by_username(base) is None:
         return base

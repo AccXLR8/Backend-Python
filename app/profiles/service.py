@@ -253,7 +253,12 @@ class ProfileService:
             user.username = username
 
         if nationality is not None:
-            user.nationality = nationality
+            if user.is_guest and nationality != "global":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail='Guest profiles must use nationality "global"',
+                )
+            user.nationality = "global" if user.is_guest else nationality
 
         if avatar_id is not None:
             avatar = await session.get(db.AvatarModel, avatar_id)

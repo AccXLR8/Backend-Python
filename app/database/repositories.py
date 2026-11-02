@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Sequence
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import models as db
@@ -35,7 +35,10 @@ class UserRepository:
 
     async def get_registered_by_username(self, username: str) -> db.UserModel | None:
         result = await self.session.execute(
-            select(db.UserModel).where(db.UserModel.username == username, db.UserModel.is_guest.is_(False))
+            select(db.UserModel).where(
+                func.lower(db.UserModel.username) == username.strip().lower(),
+                db.UserModel.is_guest.is_(False),
+            )
         )
         return result.scalar_one_or_none()
 

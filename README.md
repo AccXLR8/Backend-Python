@@ -62,8 +62,13 @@ The application automatically runs `alembic upgrade head` during startup (see `a
 ## Authentication
 
 - `POST /api/auth/google` — accepts a Google Identity Services ID token, verifies its signature/audience/issuer/expiry and verified email, then returns the backend JWT used by HTTP and WebSocket endpoints.
+- `POST /api/auth/register` — creates a registered account and profile. New usernames must be 3–24 ASCII letters, numbers, underscores, or hyphens. New passwords must be 8–128 characters and contain lowercase, uppercase, a number, and a symbol.
+- `POST /api/auth/login` — signs in by username (case-insensitive) and password. Existing password hashes remain supported and are upgraded after successful sign-in.
+- `POST /api/auth/change-password` — authenticated password change requiring the current password and the same strength rules as registration.
+- `POST /api/auth/guest` — creates a guest session; guests cannot use password change or ranked matchmaking.
+- Login, Google sign-in, registration, and guest creation are rate-limited per client address using Redis. Password changes are also rate-limited per account. Configure `AUTH_LOGIN_ATTEMPTS_PER_MINUTE`, `AUTH_REGISTRATION_ATTEMPTS_PER_MINUTE`, `AUTH_GUEST_ATTEMPTS_PER_MINUTE`, and `AUTH_PASSWORD_CHANGES_PER_MINUTE`. Configure the ASGI server to trust forwarded client-address headers only from known reverse proxies.
 - Set `GOOGLE_CLIENT_ID` on the backend to the same OAuth web client ID used by `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in the frontend.
-- Existing password/guest endpoints remain available for backward compatibility, but the frontend presents Google as its only sign-in option.
+- Password reset by email is not available yet because local accounts do not collect verified email addresses and the backend has no mail delivery/token flow. Google-only accounts continue to sign in with Google. Password changes do not revoke already-issued bearer tokens; they remain valid for up to 24 hours.
 - Every backend token embeds the user id/username and works for both HTTP and WebSocket endpoints.
 
 ## Matchmaking
@@ -85,7 +90,7 @@ Both variants use the same authentication + assignment flow; the mini endpoints 
 ## Player profiles
 
 - `GET /api/profiles/me` — authenticated profile, statistics, selected avatar and orb skin, owned orb skins, earned achievements, creation date, and profile age.
-- `PATCH /api/profiles/me` — update the authenticated player's unique username, predefined avatar, and/or owned orb skin.
+- `PATCH /api/profiles/me` — update the authenticated player's unique username, nationality, predefined avatar, and/or owned orb skin. Username changes follow the same 3–24 character rules and are checked case-insensitively.
 - `GET /api/skins/orbs` — enabled orb skin catalog with stable asset keys for client-side artwork mapping.
 - `POST /api/matchmaking/ranked/join`, `GET /api/matchmaking/ranked/status`, and `POST /api/matchmaking/ranked/leave` — registered-account-only 8×8 Flux matchmaking.
 - `GET /api/matchmaking/ranked/profile` — ranked win/loss record, placement progress, Flux, and radioactive-element league.

@@ -4,7 +4,9 @@ import uuid
 import re
 from datetime import datetime
 
-from pydantic import AnyHttpUrl, BaseModel, Field, field_validator
+from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
+
+from app.auth.schemas import normalize_username
 
 
 class AvatarSchema(BaseModel):
@@ -46,6 +48,8 @@ class ProfileResponse(BaseModel):
 
 
 class ProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     username: str | None = Field(default=None, min_length=3, max_length=24)
     avatar_id: int | None = Field(default=None, ge=1)
     equipped_orb_skin_id: str | None = Field(default=None, min_length=1, max_length=64)
@@ -68,12 +72,7 @@ class ProfileUpdateRequest(BaseModel):
     def validate_username(cls, value: str | None) -> str | None:
         if value is None:
             return value
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("Username cannot be empty")
-        if not all(character.isalnum() or character in "_-" for character in normalized):
-            raise ValueError("Username may contain only letters, numbers, underscores, and hyphens")
-        return normalized
+        return normalize_username(value)
 
 
 class AvatarListResponse(BaseModel):

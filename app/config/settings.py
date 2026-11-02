@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     websocket_connections_per_minute: int = Field(default=30, ge=1, le=300)
     websocket_max_connections_per_user: int = Field(default=5, ge=1, le=20)
     rate_limit_moves_per_minute: int = Field(default=60, ge=1, le=600)
+    auth_login_attempts_per_minute: int = Field(default=20, alias="AUTH_LOGIN_ATTEMPTS_PER_MINUTE", ge=1, le=120)
+    auth_registration_attempts_per_minute: int = Field(default=8, alias="AUTH_REGISTRATION_ATTEMPTS_PER_MINUTE", ge=1, le=60)
+    auth_guest_attempts_per_minute: int = Field(default=10, alias="AUTH_GUEST_ATTEMPTS_PER_MINUTE", ge=1, le=60)
+    auth_password_changes_per_minute: int = Field(default=5, alias="AUTH_PASSWORD_CHANGES_PER_MINUTE", ge=1, le=30)
     matchmaking_queue_lease_seconds: int = Field(default=180, ge=30, le=3600)
 
     allowed_origins: List[AnyHttpUrl] = Field(default_factory=list)

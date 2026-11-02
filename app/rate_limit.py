@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 
 from app.config.settings import get_settings
 from app.redis.client import RedisClient
@@ -54,6 +55,42 @@ async def enforce_move_rate_limit(user_id: str) -> None:
         user_id=user_id,
         scope="moves",
         limit=get_settings().rate_limit_moves_per_minute,
+    )
+
+
+async def enforce_auth_attempt_limit(request: Request | None, operation: str) -> None:
+    """Throttle unauthenticated auth flows by the connection's client address.
+
+    The API gateway/ASGI server must be configured to trust forwarded headers
+    only from known proxies so ``request.client.host`` cannot be spoofed.
+    ``None`` is supported for direct handler calls outside an HTTP request.
+    """
+    if request is None:
+        return
+    settings = get_settings()
+    limits = {
+        "login": settings.auth_login_attempts_per_minute,
+        "google": settings.auth_login_attempts_per_minute,
+        "register": settings.auth_registration_attempts_per_minute,
+        "guest": settings.auth_guest_attempts_per_minute,
+    }
+    limit = limits.get(operation)
+    if limit is None:
+        raise ValueError(f"Unknown auth rate-limit operation: {operation}")
+    client_host = request.client.host if request.client else "unknown"
+    client_key = hashlib.sha256(client_host.encode("utf-8")).hexdigest()
+    await enforce_rate_limit(
+        user_id=client_key,
+        scope=f"auth-{operation}",
+        limit=limit,
+    )
+
+
+async def enforce_password_change_limit(user_id: str) -> None:
+    await enforce_rate_limit(
+        user_id=user_id,
+        scope="auth-password-change",
+        limit=get_settings().auth_password_changes_per_minute,
     )
 
 

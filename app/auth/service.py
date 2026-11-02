@@ -11,6 +11,7 @@ from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2 import id_token as google_id_token
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+from passlib.exc import InvalidHashError, UnknownHashError
 
 from app.auth.models import User
 from app.config.settings import get_settings
@@ -32,7 +33,14 @@ class GoogleAuthConfigurationError(Exception):
 class AuthService:
     def __init__(self) -> None:
         self._algorithm = "HS256"
-        self._password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+        # New accounts use PBKDF2-SHA256, which safely supports the full API
+        # password length. Existing bcrypt hashes remain verifiable and are
+        # upgraded after a successful login.
+        self._password_context = CryptContext(
+            schemes=["pbkdf2_sha256", "bcrypt"],
+            deprecated=["bcrypt"],
+            pbkdf2_sha256__rounds=600_000,
+        )
         self._token_ttl = timedelta(hours=24)
 
     async def authenticate(self, token: str) -> User:
@@ -82,7 +90,18 @@ class AuthService:
     def verify_password(self, plain_password: str, hashed_password: str | None) -> bool:
         if not hashed_password:
             return False
-        return self._password_context.verify(plain_password, hashed_password)
+        try:
+            return self._password_context.verify(plain_password, hashed_password)
+        except (InvalidHashError, UnknownHashError, ValueError, TypeError):
+            return False
+
+    def password_hash_needs_upgrade(self, hashed_password: str | None) -> bool:
+        if not hashed_password:
+            return False
+        try:
+            return self._password_context.needs_update(hashed_password)
+        except (InvalidHashError, UnknownHashError, ValueError, TypeError):
+            return False
 
     def create_access_token(self, *, user: db.UserModel | User) -> str:
         payload = self._build_payload(user)
