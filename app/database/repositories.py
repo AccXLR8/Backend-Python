@@ -42,6 +42,12 @@ class UserRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_email(self, email: str) -> db.UserModel | None:
+        result = await self.session.execute(
+            select(db.UserModel).where(func.lower(db.UserModel.email) == email.strip().lower())
+        )
+        return result.scalar_one_or_none()
+
     async def create(self, **kwargs) -> db.UserModel:
         user = db.UserModel(**kwargs)
         self.session.add(user)

@@ -40,6 +40,8 @@ class TokenUser(BaseModel):
     username: str
     is_guest: bool
     nationality: str = "global"
+    email: str | None = None
+    email_verified: bool = False
 
 
 class TokenResponse(BaseModel):
@@ -84,6 +86,7 @@ async def google_sign_in(
                 email=identity["email"],
                 is_guest=False,
             )
+            user.email_verified = True
             profile_service.create_records_for_new_user(
                 session,
                 user.id,
@@ -92,6 +95,7 @@ async def google_sign_in(
         else:
             # Keep the game-facing username stable while refreshing mutable profile data.
             user.email = identity["email"]
+            user.email_verified = True
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -99,6 +103,11 @@ async def google_sign_in(
         # use the account committed by the request that won the unique constraint.
         user = await repo.get_by_google_subject(identity["subject"])
         if user is None:
+            if await repo.get_by_email(identity["email"]):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Email address is already associated with another account",
+                ) from exc
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Could not create the Google account; please try again",
@@ -118,11 +127,15 @@ async def register_user(
     existing = await repo.get_registered_by_username(body.username)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken")
+    if await repo.get_by_email(str(body.email)):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email address already in use")
 
     password_hash = auth_service.hash_password(body.password)
     try:
         user = await repo.create(
             username=body.username,
+            email=str(body.email),
+            email_verified=False,
             password_hash=password_hash,
             is_guest=False,
             nationality=body.nationality,
@@ -133,6 +146,8 @@ async def register_user(
         await session.rollback()
         if await repo.get_registered_by_username(body.username):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken") from exc
+        if await repo.get_by_email(str(body.email)):
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email address already in use") from exc
         raise
 
     token = auth_service.create_access_token(user=user)
@@ -219,4 +234,11 @@ def _generate_guest_username(desired: str | None = None) -> str:
 
 
 def _serialize_user(user) -> TokenUser:
-    return TokenUser(id=user.id if isinstance(user.id, uuid.UUID) else uuid.UUID(str(user.id)), username=user.username, is_guest=user.is_guest, nationality=getattr(user, "nationality", "global") or "global")
+    return TokenUser(
+        id=user.id if isinstance(user.id, uuid.UUID) else uuid.UUID(str(user.id)),
+        username=user.username,
+        is_guest=user.is_guest,
+        nationality=getattr(user, "nationality", "global") or "global",
+        email=getattr(user, "email", None),
+        email_verified=getattr(user, "email_verified", False),
+    )

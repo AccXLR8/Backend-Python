@@ -48,6 +48,7 @@ class UserModel(Base):
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     google_subject: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
     is_guest: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # ISO 3166-1 alpha-2 code, or "global" when the player has not selected one.
     nationality: Mapped[str] = mapped_column(String(8), default="global", server_default="global", nullable=False)

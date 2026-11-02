@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 USERNAME_PATTERN = re.compile(r"[A-Za-z0-9_-]+\Z")
@@ -37,7 +37,9 @@ class AuthRequest(BaseModel):
 
 class RegisterRequest(AuthRequest):
     username: str = Field(min_length=3, max_length=24)
+    email: EmailStr = Field(max_length=320)
     password: str = Field(min_length=8, max_length=128)
+    confirm_password: str = Field(min_length=8, max_length=128)
     nationality: str = Field(default="global", min_length=2, max_length=8)
 
     @field_validator("username", mode="before")
@@ -51,6 +53,17 @@ class RegisterRequest(AuthRequest):
     @classmethod
     def check_password_strength(cls, value: str) -> str:
         return validate_new_password(value)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: EmailStr) -> str:
+        return str(value).strip().lower()
+
+    @model_validator(mode="after")
+    def passwords_match(self) -> "RegisterRequest":
+        if self.password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
 
     @field_validator("nationality")
     @classmethod

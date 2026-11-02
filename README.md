@@ -62,13 +62,13 @@ The application automatically runs `alembic upgrade head` during startup (see `a
 ## Authentication
 
 - `POST /api/auth/google` — accepts a Google Identity Services ID token, verifies its signature/audience/issuer/expiry and verified email, then returns the backend JWT used by HTTP and WebSocket endpoints.
-- `POST /api/auth/register` — creates a registered account and profile. New usernames must be 3–24 ASCII letters, numbers, underscores, or hyphens. New passwords must be 8–128 characters and contain lowercase, uppercase, a number, and a symbol.
+- `POST /api/auth/register` — creates a registered account and profile. Requires a unique email, a repeated matching password, a 3–24 character ASCII username, and a password with at least 8 characters including lowercase, uppercase, a number, and a symbol. New local emails are stored as unverified until email delivery/verification is configured.
 - `POST /api/auth/login` — signs in by username (case-insensitive) and password. Existing password hashes remain supported and are upgraded after successful sign-in.
 - `POST /api/auth/change-password` — authenticated password change requiring the current password and the same strength rules as registration.
 - `POST /api/auth/guest` — creates a guest session; guests cannot use password change or ranked matchmaking.
 - Login, Google sign-in, registration, and guest creation are rate-limited per client address using Redis. Password changes are also rate-limited per account. Configure `AUTH_LOGIN_ATTEMPTS_PER_MINUTE`, `AUTH_REGISTRATION_ATTEMPTS_PER_MINUTE`, `AUTH_GUEST_ATTEMPTS_PER_MINUTE`, and `AUTH_PASSWORD_CHANGES_PER_MINUTE`. Configure the ASGI server to trust forwarded client-address headers only from known reverse proxies.
 - Set `GOOGLE_CLIENT_ID` on the backend to the same OAuth web client ID used by `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in the frontend.
-- Password reset by email is not available yet because local accounts do not collect verified email addresses and the backend has no mail delivery/token flow. Google-only accounts continue to sign in with Google. Password changes do not revoke already-issued bearer tokens; they remain valid for up to 24 hours.
+- Email recovery is not active yet: local signups store an unverified email until a verification and mail-delivery flow is configured. Google-only accounts continue to sign in with Google. Password changes do not revoke already-issued bearer tokens; they remain valid for up to 24 hours.
 - Every backend token embeds the user id/username and works for both HTTP and WebSocket endpoints.
 
 ## Matchmaking
@@ -174,6 +174,7 @@ See `.env.example` for required configuration: database, Redis, Azure storage, b
 
 - The vendored `game_engine` package is the source of truth for game rules; update it and its tests in this repository.
 - Alembic migrations live in `app/database/migrations`; the server runs `alembic upgrade head` automatically during startup, so any new database is initialized without manual SQL.
+- The account-email migration creates a case-insensitive unique index and intentionally stops if existing users already share an email. Resolve any duplicate Google account emails before deploying that migration.
 - Redis keys are centralized under `app/redis/keys.py`.
 
 ## Architecture Overview

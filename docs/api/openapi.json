@@ -2171,11 +2171,23 @@
             "minLength": 3,
             "title": "Username"
           },
+          "email": {
+            "type": "string",
+            "maxLength": 320,
+            "format": "email",
+            "title": "Email"
+          },
           "password": {
             "type": "string",
             "maxLength": 128,
             "minLength": 8,
             "title": "Password"
+          },
+          "confirm_password": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 8,
+            "title": "Confirm Password"
           },
           "nationality": {
             "type": "string",
@@ -2189,7 +2201,9 @@
         "type": "object",
         "required": [
           "username",
-          "password"
+          "email",
+          "password",
+          "confirm_password"
         ],
         "title": "RegisterRequest"
       },
@@ -2234,6 +2248,22 @@
             "type": "string",
             "title": "Nationality",
             "default": "global"
+          },
+          "email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Email"
+          },
+          "email_verified": {
+            "type": "boolean",
+            "title": "Email Verified",
+            "default": false
           }
         },
         "type": "object",
