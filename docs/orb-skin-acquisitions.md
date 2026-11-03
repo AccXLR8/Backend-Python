@@ -6,17 +6,40 @@ Orb skins remain owned and equipped by user ID. `classic` is free and assigned t
 
 `achievement_orb_skin_rewards` maps achievements to orb skins. When an achievement is earned, the profile service grants mapped skins to `user_orb_skins` in the same transaction. Grants are idempotent, and profile reads reconcile rewards mapped after an achievement was earned.
 
-Achievement entries expose `orb_skin_reward_ids`; the catalog exposes `unlock_achievement_codes`. The Auric Comet legendary orb is awarded by `RANKED_WIN_STREAK_20` after 20 consecutive ranked wins. Migration `20261103_000017` adds its catalog entry and reward mapping, then backfills current ranked streaks from completed ranked games. It is achievement-only: `price_gems` remains `NULL`.
+Achievement entries expose `orb_skin_reward_ids`; the catalog exposes `unlock_achievement_codes`. The Gilded Glass legendary orb (stable ID `auric-comet`) is awarded by `RANKED_WIN_STREAK_20` after 20 consecutive ranked wins. Migration `20261103_000017` adds its catalog entry and reward mapping, then backfills current ranked streaks from completed ranked games. It is achievement-only: `price_gems` remains `NULL`.
 
 The frontend shop lists achievement rewards as locked items with their unlock requirement. They are never purchasable with Gems. Earning the achievement adds the skin to the player's inventory; the player can then equip it from the skin locker.
 
-Auric Comet's bundled frontend assets live at `public/orb-skins/auric-comet/`: `preview.webp`, `texture.webp`, `detail.webp`, and `collision.mp3`. Deploy the frontend assets before or alongside the backend migration. The backend asset URLs use the configured `ORB_SKIN_ASSET_BASE_URL` and the skin's asset key/version.
+Bundled frontend assets live at `public/orb-skins/<asset-key>/`: `preview.webp`, `texture.webp`, `detail.webp`, and `collision.mp3`. Deploy the frontend assets before or alongside the backend migration. The backend asset URLs use the configured `ORB_SKIN_ASSET_BASE_URL` and each skin's asset key/version.
+
+## Reference collection
+
+Migration `20261103_000018` seeds the 12-skin Orb Skins collection shown in the frontend locker. `classic` remains free and is assigned to every account. Gem prices below are draft balancing values and can be changed by updating `orb_skins.price_gems`.
+
+| Rarity | Skin | Draft price / unlock |
+| --- | --- | ---: |
+| Legendary | Gilded Glass | 20 consecutive ranked wins; not purchasable |
+| Legendary | Cosmic Core | 4,500 Gems |
+| Epic | Crimson Glass | 2,500 Gems |
+| Epic | Void Prism | 2,500 Gems |
+| Epic | Neon Circuit | 2,500 Gems |
+| Rare | Cool Blue Glass | 1,200 Gems |
+| Rare | Frosted Core | 1,200 Gems |
+| Rare | Electric Halo | 1,200 Gems |
+| Common | Classic Orb | Free; included in every inventory |
+| Common | Matte Pearl | 500 Gems |
+| Common | Graphite | 500 Gems |
+| Common | Ivory Glow | 500 Gems |
+
+Only Classic is granted by default. The shop catalog marks priced skins for sale but does not add them to inventory; the existing server-side purchase endpoint deducts Gems and grants ownership. Gilded Glass stays linked to the ranked streak reward and has no Gem price.
+
+New visual assets are bundled by asset key under the frontend's `public/orb-skins/` directory. The default asset base is `https://superkritical.com`; set `ORB_SKIN_ASSET_BASE_URL` on the backend if production uses a different asset host. Until distinct collision sounds are commissioned, each new skin bundles the Classic collision clip. Replace the file for a skin and increment its `asset_version` to publish a distinct sound without changing the API contract.
 
 ## Configure products
 
 Set `orb_skins.price_gems` to the server-authoritative price for a skin. Leave it `NULL` when the skin is not for sale. Rarity is `common`, `rare`, `epic`, or `legendary`.
 
-The old direct-cash columns and purchase ledger are retained as legacy history, but the shop never reads them. Existing cash prices are not converted to Gems automatically; set `price_gems` explicitly for each skin you want to sell. The Auric Comet reward is not assigned a price; Gem packs must also be seeded separately before players can buy Gems.
+The old direct-cash columns and purchase ledger are retained as legacy history, but the shop never reads them. Existing cash prices are not converted to Gems automatically; set `price_gems` explicitly for each skin you want to sell. The Gilded Glass reward is not assigned a price; Gem packs must also be seeded separately before players can buy Gems.
 
 ```sql
 UPDATE orb_skins

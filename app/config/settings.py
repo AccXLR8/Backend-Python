@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     azure_storage_connection_string: str = Field(..., alias="AZURE_STORAGE_CONNECTION_STRING")
     azure_blob_container: str = Field(default="replays")
     orb_skin_asset_base_url: AnyHttpUrl = Field(
-        default="https://chain-reaction-frontend-ebon.vercel.app",
+        default="https://superkritical.com",
         alias="ORB_SKIN_ASSET_BASE_URL",
         validate_default=True,
     )
