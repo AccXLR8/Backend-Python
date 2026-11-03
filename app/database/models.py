@@ -5,18 +5,19 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from sqlalchemy import (
+    JSON,
     Boolean,
-    Column,
+    CheckConstraint,
     DateTime,
-    Enum as SAEnum,
     ForeignKey,
     Index,
     Integer,
     Numeric,
     String,
-    JSON,
-    Text,
     UniqueConstraint,
+)
+from sqlalchemy import (
+    Enum as SAEnum,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -99,12 +100,23 @@ class FriendRequestModel(Base):
 
 class OrbSkinModel(Base):
     __tablename__ = "orb_skins"
+    __table_args__ = (
+        CheckConstraint("rarity IN ('common', 'rare', 'epic', 'legendary')", name="ck_orb_skins_rarity"),
+        CheckConstraint("price_gems IS NULL OR price_gems > 0", name="ck_orb_skins_price_gems_positive"),
+    )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(96), nullable=False)
     asset_key: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     preview_asset_key: Mapped[str] = mapped_column(String(64), nullable=False)
     asset_version: Mapped[str] = mapped_column(String(64), default="1", server_default="1", nullable=False)
+    rarity: Mapped[str] = mapped_column(String(16), default="common", server_default="common", nullable=False)
+    price_gems: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Legacy direct-cash values are retained for audit/migration history; shop code ignores them.
+    legacy_price_amount_minor: Mapped[int | None] = mapped_column("price_amount_minor", Integer, nullable=True)
+    legacy_price_currency: Mapped[str] = mapped_column(
+        "price_currency", String(3), default="INR", server_default="INR", nullable=False
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
@@ -128,6 +140,101 @@ class UserOrbSkinSelectionModel(Base):
     skin_id: Mapped[str] = mapped_column(String(64), ForeignKey("orb_skins.id"), nullable=False)
 
 
+class AchievementOrbSkinRewardModel(Base):
+    """Maps an achievement to one skin that is granted when it is earned."""
+
+    __tablename__ = "achievement_orb_skin_rewards"
+
+    achievement_id: Mapped[int] = mapped_column(
+        ForeignKey("achievements.id", ondelete="CASCADE"), primary_key=True
+    )
+    skin_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("orb_skins.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
+class UserGemWalletModel(Base):
+    """The player's server-owned premium-currency balance."""
+
+    __tablename__ = "user_gem_wallets"
+    __table_args__ = (
+        CheckConstraint("gem_balance >= 0", name="ck_user_gem_wallet_nonnegative"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    gem_balance: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class GemPackModel(Base):
+    """A backend-priced offer that exchanges real money for Gems."""
+
+    __tablename__ = "gem_packs"
+    __table_args__ = (
+        CheckConstraint("gems_amount > 0", name="ck_gem_pack_amount_positive"),
+        CheckConstraint("price_amount_minor > 0", name="ck_gem_pack_price_positive"),
+        CheckConstraint("length(price_currency) = 3 AND price_currency = upper(price_currency)", name="ck_gem_pack_currency"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(96), nullable=False)
+    gems_amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    price_amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    price_currency: Mapped[str] = mapped_column(String(3), default="INR", server_default="INR", nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+
+
+class GemPackPurchaseModel(Base):
+    """Razorpay order ledger; captured orders credit their recorded Gem amount once."""
+
+    __tablename__ = "gem_pack_purchases"
+    __table_args__ = (
+        Index("ix_gem_pack_purchases_user_created", "user_id", "created_at"),
+        CheckConstraint("amount_minor > 0", name="ck_gem_pack_purchase_price_positive"),
+        CheckConstraint("gems_amount > 0", name="ck_gem_pack_purchase_gems_positive"),
+        CheckConstraint("status IN ('created', 'paid')", name="ck_gem_pack_purchase_status"),
+        UniqueConstraint("razorpay_payment_id", name="uq_gem_pack_purchase_payment"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    pack_id: Mapped[str] = mapped_column(String(64), ForeignKey("gem_packs.id"), nullable=False)
+    razorpay_order_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    razorpay_payment_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    gems_amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="created", server_default="created", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WalletTransactionModel(Base):
+    """Auditable balance changes for purchased Gems and skin purchases."""
+
+    __tablename__ = "wallet_transactions"
+    __table_args__ = (
+        Index("ix_wallet_transactions_user_created", "user_id", "created_at"),
+        UniqueConstraint("user_id", "reason", "reference_id", name="uq_wallet_transaction_reference"),
+        CheckConstraint("amount_delta <> 0", name="ck_wallet_transaction_nonzero"),
+        CheckConstraint("reason IN ('gem_pack', 'orb_skin')", name="ck_wallet_transaction_reason"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    amount_delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(String(16), nullable=False)
+    reference_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+
 class PlayerStatsModel(Base):
     __tablename__ = "player_stats"
 
@@ -138,6 +245,8 @@ class PlayerStatsModel(Base):
     matches_won: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     current_win_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     longest_win_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # Ranked streak is independent from casual play; only ranked losses reset it.
+    current_ranked_win_streak: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     longest_chain: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False

@@ -10,8 +10,9 @@ from app.profiles.schemas import OrbSkinListResponse
 from app.profiles.service import profile_service
 
 router = APIRouter()
+SessionDependency = Annotated[AsyncSession, Depends(get_session)]
 
 
 @router.get("/orbs", response_model=OrbSkinListResponse)
-async def list_orb_skins(session: Annotated[AsyncSession, Depends(get_session)]):
+async def list_orb_skins(session: SessionDependency):
     return OrbSkinListResponse(skins=await profile_service.list_orb_skins(session))

@@ -1321,6 +1321,282 @@
         }
       }
     },
+    "/api/friends": {
+      "get": {
+        "tags": [
+          "friends"
+        ],
+        "summary": "List Friends",
+        "operationId": "list_friends_api_friends_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/friends/search": {
+      "get": {
+        "tags": [
+          "friends"
+        ],
+        "summary": "Search Players",
+        "operationId": "search_players_api_friends_search_get",
+        "parameters": [
+          {
+            "name": "username",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "title": "Username"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/friends/requests": {
+      "post": {
+        "tags": [
+          "friends"
+        ],
+        "summary": "Send Friend Request",
+        "operationId": "send_friend_request_api_friends_requests_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FriendRequestBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/friends/requests/{request_id}/accept": {
+      "post": {
+        "tags": [
+          "friends"
+        ],
+        "summary": "Accept Friend Request",
+        "operationId": "accept_friend_request_api_friends_requests__request_id__accept_post",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/friends/requests/{request_id}": {
+      "delete": {
+        "tags": [
+          "friends"
+        ],
+        "summary": "Remove Friend Request",
+        "operationId": "remove_friend_request_api_friends_requests__request_id__delete",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/skins/orbs": {
       "get": {
         "tags": [
@@ -1335,6 +1611,298 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OrbSkinListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shop/wallet": {
+      "get": {
+        "tags": [
+          "shop"
+        ],
+        "summary": "Read Wallet",
+        "operationId": "read_wallet_api_shop_wallet_get",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WalletResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shop/gem-packs": {
+      "get": {
+        "tags": [
+          "shop"
+        ],
+        "summary": "List Gem Packs",
+        "operationId": "list_gem_packs_api_shop_gem_packs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GemPackListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shop/gem-packs/{pack_id}/checkout": {
+      "post": {
+        "tags": [
+          "shop"
+        ],
+        "summary": "Create Gem Pack Checkout",
+        "operationId": "create_gem_pack_checkout_api_shop_gem_packs__pack_id__checkout_post",
+        "parameters": [
+          {
+            "name": "pack_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Pack Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GemPackCheckoutResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shop/gem-packs/verify": {
+      "post": {
+        "tags": [
+          "shop"
+        ],
+        "summary": "Verify Gem Pack Checkout",
+        "operationId": "verify_gem_pack_checkout_api_shop_gem_packs_verify_post",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GemPackCheckoutVerificationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GemPackPurchaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shop/orb-skins/{skin_id}/purchase": {
+      "post": {
+        "tags": [
+          "shop"
+        ],
+        "summary": "Purchase Orb Skin",
+        "operationId": "purchase_orb_skin_api_shop_orb_skins__skin_id__purchase_post",
+        "parameters": [
+          {
+            "name": "skin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Skin Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrbSkinGemPurchaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shop/razorpay/webhook": {
+      "post": {
+        "tags": [
+          "shop"
+        ],
+        "summary": "Razorpay Webhook",
+        "operationId": "razorpay_webhook_api_shop_razorpay_webhook_post",
+        "parameters": [
+          {
+            "name": "X-Razorpay-Signature",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Razorpay-Signature"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1442,6 +2010,13 @@
             "type": "boolean",
             "title": "Unlocked",
             "default": false
+          },
+          "orb_skin_reward_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Orb Skin Reward Ids"
           }
         },
         "type": "object",
@@ -1558,6 +2133,21 @@
           "DISCONNECT"
         ],
         "title": "FinishReason"
+      },
+      "FriendRequestBody": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 3,
+            "title": "Username"
+          }
+        },
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "title": "FriendRequestBody"
       },
       "GameHistoryResponse": {
         "properties": {
@@ -1709,6 +2299,160 @@
           "CANCELLED"
         ],
         "title": "GameStatus"
+      },
+      "GemPackCheckoutResponse": {
+        "properties": {
+          "purchase_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Purchase Id"
+          },
+          "key_id": {
+            "type": "string",
+            "title": "Key Id"
+          },
+          "order_id": {
+            "type": "string",
+            "title": "Order Id"
+          },
+          "amount": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Amount"
+          },
+          "currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "title": "Currency"
+          },
+          "gems_amount": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Gems Amount"
+          },
+          "pack_name": {
+            "type": "string",
+            "title": "Pack Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "purchase_id",
+          "key_id",
+          "order_id",
+          "amount",
+          "currency",
+          "gems_amount",
+          "pack_name"
+        ],
+        "title": "GemPackCheckoutResponse"
+      },
+      "GemPackCheckoutVerificationRequest": {
+        "properties": {
+          "order_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Order Id"
+          },
+          "payment_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Payment Id"
+          },
+          "signature": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Signature"
+          }
+        },
+        "type": "object",
+        "required": [
+          "order_id",
+          "payment_id",
+          "signature"
+        ],
+        "title": "GemPackCheckoutVerificationRequest"
+      },
+      "GemPackListResponse": {
+        "properties": {
+          "packs": {
+            "items": {
+              "$ref": "#/components/schemas/GemPackSchema"
+            },
+            "type": "array",
+            "title": "Packs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "packs"
+        ],
+        "title": "GemPackListResponse"
+      },
+      "GemPackPurchaseResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "credited",
+            "title": "Status"
+          },
+          "gems_added": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Gems Added"
+          },
+          "gem_balance": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Gem Balance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "gems_added",
+          "gem_balance"
+        ],
+        "title": "GemPackPurchaseResponse"
+      },
+      "GemPackSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "gems_amount": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Gems Amount"
+          },
+          "price_amount_minor": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Price Amount Minor"
+          },
+          "price_currency": {
+            "type": "string",
+            "pattern": "^[A-Z]{3}$",
+            "title": "Price Currency"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "gems_amount",
+          "price_amount_minor",
+          "price_currency"
+        ],
+        "title": "GemPackSchema"
       },
       "GoogleSignInRequest": {
         "properties": {
@@ -1937,6 +2681,45 @@
         ],
         "title": "OrbSkinCollisionSoundSchema"
       },
+      "OrbSkinGemPurchaseResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "purchased",
+            "title": "Status"
+          },
+          "skin_id": {
+            "type": "string",
+            "title": "Skin Id"
+          },
+          "gems_spent": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Gems Spent"
+          },
+          "gem_balance": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Gem Balance"
+          },
+          "owned_orb_skin_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Owned Orb Skin Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "skin_id",
+          "gems_spent",
+          "gem_balance",
+          "owned_orb_skin_ids"
+        ],
+        "title": "OrbSkinGemPurchaseResponse"
+      },
       "OrbSkinListResponse": {
         "properties": {
           "skins": {
@@ -1974,6 +2757,36 @@
           "enabled": {
             "type": "boolean",
             "title": "Enabled"
+          },
+          "rarity": {
+            "type": "string",
+            "enum": [
+              "common",
+              "rare",
+              "epic",
+              "legendary"
+            ],
+            "title": "Rarity",
+            "default": "common"
+          },
+          "price_gems": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Gems"
+          },
+          "unlock_achievement_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unlock Achievement Codes"
           },
           "assets": {
             "$ref": "#/components/schemas/OrbSkinAssetsSchema"
@@ -2313,6 +3126,31 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WalletResponse": {
+        "properties": {
+          "currency": {
+            "type": "string",
+            "const": "gems",
+            "title": "Currency",
+            "default": "gems"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "default": "Gems"
+          },
+          "balance": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Balance"
+          }
+        },
+        "type": "object",
+        "required": [
+          "balance"
+        ],
+        "title": "WalletResponse"
       },
       "WebSocketTicketResponse": {
         "properties": {

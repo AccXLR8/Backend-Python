@@ -99,6 +99,8 @@ Orb skin compatibility contract: every user, including guests, owns and equips `
 
 The skin catalog also returns an `assets` bundle containing versioned preview, texture, detail, and collision-sound URLs. `ORB_SKIN_ASSET_BASE_URL` defaults to the current frontend origin and can be overridden with the HTTPS CDN or frontend origin serving `/orb-skins/{asset_key}/...` files. Enabled skins are expected to publish `preview.webp`, `texture.webp`, `detail.webp`, and `collision.mp3`; the sound is returned as `audio/mpeg`. Increment that skin's `asset_version` when replacing its files so clients can refresh cached assets. Existing `asset_key` and `preview_asset_key` fields remain available.
 
+Orb skin acquisitions support achievement rewards and Gems purchases. Razorpay checkout is used only to top up Gems; skins are bought with the server-owned wallet. See [the Gems and orb skin shop guide](docs/orb-skin-acquisitions.md) for the API, webhook setup, deployment secrets, and product configuration.
+
 Accepted REST move responses and WebSocket `move_accepted` payloads include `player_slot`, the authoritative slot that made that move. Use it to associate every reaction step with the mover's equipped skin, even when the final state has already advanced to the opponent's turn.
 
 Example profile fields:

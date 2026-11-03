@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import uuid
 import re
+import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, field_validator
 
@@ -32,6 +33,7 @@ class AchievementSchema(BaseModel):
     badge_image_url: str
     earned_at: datetime | None = None
     unlocked: bool = False
+    orb_skin_reward_ids: list[str] = Field(default_factory=list)
 
 
 class ProfileResponse(BaseModel):
@@ -89,6 +91,9 @@ class OrbSkinSchema(BaseModel):
     asset_key: str
     preview_asset_key: str
     enabled: bool
+    rarity: Literal["common", "rare", "epic", "legendary"] = "common"
+    price_gems: int | None = Field(default=None, ge=1)
+    unlock_achievement_codes: list[str] = Field(default_factory=list)
     assets: "OrbSkinAssetsSchema"
 
     @field_validator("asset_key", "preview_asset_key")
@@ -114,3 +119,51 @@ class OrbSkinAssetsSchema(BaseModel):
 
 class OrbSkinListResponse(BaseModel):
     skins: list[OrbSkinSchema]
+
+
+class GemPackSchema(BaseModel):
+    id: str
+    name: str
+    gems_amount: int = Field(ge=1)
+    price_amount_minor: int = Field(ge=1)
+    price_currency: str = Field(pattern=r"^[A-Z]{3}$")
+
+
+class GemPackListResponse(BaseModel):
+    packs: list[GemPackSchema]
+
+
+class WalletResponse(BaseModel):
+    currency: Literal["gems"] = "gems"
+    display_name: str = "Gems"
+    balance: int = Field(ge=0)
+
+
+class GemPackCheckoutResponse(BaseModel):
+    purchase_id: uuid.UUID
+    key_id: str
+    order_id: str
+    amount: int = Field(ge=1)
+    currency: str = Field(pattern=r"^[A-Z]{3}$")
+    gems_amount: int = Field(ge=1)
+    pack_name: str
+
+
+class GemPackCheckoutVerificationRequest(BaseModel):
+    order_id: str = Field(min_length=1, max_length=64)
+    payment_id: str = Field(min_length=1, max_length=64)
+    signature: str = Field(min_length=1, max_length=128)
+
+
+class GemPackPurchaseResponse(BaseModel):
+    status: Literal["credited"]
+    gems_added: int = Field(ge=1)
+    gem_balance: int = Field(ge=0)
+
+
+class OrbSkinGemPurchaseResponse(BaseModel):
+    status: Literal["purchased"]
+    skin_id: str
+    gems_spent: int = Field(ge=1)
+    gem_balance: int = Field(ge=0)
+    owned_orb_skin_ids: list[str]

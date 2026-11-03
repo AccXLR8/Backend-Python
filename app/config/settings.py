@@ -1,7 +1,7 @@
 from functools import lru_cache
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
 from pydantic import AnyHttpUrl, Field, model_validator
-from typing import List, Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     debug: bool = Field(default=True)
     secret_key: str = Field(default="change-me")
     log_level: str = Field(default="INFO")
-    google_client_id: Optional[str] = Field(default=None, alias="GOOGLE_CLIENT_ID")
+    google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
 
     database_url: str = Field(..., alias="DATABASE_URL")
     redis_url: str = Field(..., alias="REDIS_URL")
@@ -22,6 +22,9 @@ class Settings(BaseSettings):
         alias="ORB_SKIN_ASSET_BASE_URL",
         validate_default=True,
     )
+    razorpay_key_id: str | None = Field(default=None, alias="RAZORPAY_KEY_ID")
+    razorpay_key_secret: str | None = Field(default=None, alias="RAZORPAY_KEY_SECRET")
+    razorpay_webhook_secret: str | None = Field(default=None, alias="RAZORPAY_WEBHOOK_SECRET")
 
     board_width: int = Field(default=8, ge=3, le=16)
     board_height: int = Field(default=8, ge=3, le=16)
@@ -42,7 +45,7 @@ class Settings(BaseSettings):
     auth_password_changes_per_minute: int = Field(default=5, alias="AUTH_PASSWORD_CHANGES_PER_MINUTE", ge=1, le=30)
     matchmaking_queue_lease_seconds: int = Field(default=180, ge=30, le=3600)
 
-    allowed_origins: List[AnyHttpUrl] = Field(default_factory=list)
+    allowed_origins: list[AnyHttpUrl] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_production_secret(self) -> "Settings":

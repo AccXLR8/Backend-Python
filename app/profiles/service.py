@@ -8,20 +8,22 @@ from fastapi import HTTPException, status
 from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.competitive.service import competitive_service
 from app.config.settings import get_settings
 from app.database import models as db
-from app.competitive.service import competitive_service
 from app.profiles.schemas import (
     AchievementSchema,
     AvatarSchema,
-    PlayerStatsSchema,
-    ProfileResponse,
-    OrbSkinSchema,
     OrbSkinAssetsSchema,
     OrbSkinCollisionSoundSchema,
+    OrbSkinSchema,
+    PlayerStatsSchema,
+    ProfileResponse,
 )
+from app.skins.inventory import grant_orb_skins
 
 WIN_STREAK_ACHIEVEMENT = "WIN_STREAK_20"
+RANKED_WIN_STREAK_ACHIEVEMENT = "RANKED_WIN_STREAK_20"
 
 
 class ProfileService:
@@ -90,6 +92,24 @@ class ProfileService:
             )
         ).scalars().all()
         earned: dict[int, datetime] = {}
+        reward_ids: dict[int, list[str]] = {}
+        reward_rows = (
+            await session.execute(
+                select(
+                    db.AchievementOrbSkinRewardModel.achievement_id,
+                    db.AchievementOrbSkinRewardModel.skin_id,
+                )
+                .join(
+                    db.OrbSkinModel,
+                    db.OrbSkinModel.id == db.AchievementOrbSkinRewardModel.skin_id,
+                )
+                .where(db.OrbSkinModel.enabled.is_(True))
+                .order_by(db.AchievementOrbSkinRewardModel.achievement_id,
+                          db.AchievementOrbSkinRewardModel.skin_id)
+            )
+        ).all()
+        for achievement_id, skin_id in reward_rows:
+            reward_ids.setdefault(achievement_id, []).append(skin_id)
         if user_id is not None:
             earned_rows = (
                 await session.execute(
@@ -107,6 +127,7 @@ class ProfileService:
                 badge_image_url=definition.badge_image_url,
                 earned_at=earned.get(definition.id),
                 unlocked=definition.id in earned,
+                orb_skin_reward_ids=reward_ids.get(definition.id, []),
             )
             for definition in definitions
         ]
@@ -142,6 +163,9 @@ class ProfileService:
             selection = db.UserOrbSkinSelectionModel(user_id=user.id, skin_id="classic")
             session.add(selection)
         await session.flush()
+        # Also reconcile rewards if a mapping was added after an achievement was earned.
+        await self._grant_achievement_orb_skins(session, user.id)
+        await session.flush()
         owned_rows = (await session.execute(select(db.UserOrbSkinModel.skin_id).where(
             db.UserOrbSkinModel.user_id == user.id).order_by(db.UserOrbSkinModel.skin_id))).scalars().all()
         return sorted(set(owned_rows) | {"classic"}), selection.skin_id
@@ -149,6 +173,18 @@ class ProfileService:
     async def list_orb_skins(self, session: AsyncSession) -> list[OrbSkinSchema]:
         rows = (await session.execute(select(db.OrbSkinModel).where(db.OrbSkinModel.enabled.is_(True))
                                       .order_by(db.OrbSkinModel.id))).scalars().all()
+        reward_rows = (
+            await session.execute(
+                select(db.AchievementOrbSkinRewardModel.skin_id, db.AchievementModel.code)
+                .join(db.AchievementModel,
+                      db.AchievementModel.id == db.AchievementOrbSkinRewardModel.achievement_id)
+                .where(db.AchievementModel.enabled.is_(True))
+                .order_by(db.AchievementOrbSkinRewardModel.skin_id, db.AchievementModel.code)
+            )
+        ).all()
+        unlock_codes: dict[str, list[str]] = {}
+        for skin_id, code in reward_rows:
+            unlock_codes.setdefault(skin_id, []).append(code)
         base_url = str(get_settings().orb_skin_asset_base_url).rstrip("/")
         if not any(row.id == "classic" for row in rows):
             classic = self._orb_skin_schema(
@@ -160,12 +196,18 @@ class ProfileService:
                 id=row.id, name=row.name, asset_key=row.asset_key,
                 preview_asset_key=row.preview_asset_key,
                 asset_version=getattr(row, "asset_version", "1"), enabled=row.enabled,
+                rarity=getattr(row, "rarity", "common"),
+                price_gems=getattr(row, "price_gems", None),
+                unlock_achievement_codes=unlock_codes.get(row.id, []),
                 base_url=base_url,
             ) for row in rows]]
         return [self._orb_skin_schema(
             id=row.id, name=row.name, asset_key=row.asset_key,
             preview_asset_key=row.preview_asset_key,
             asset_version=getattr(row, "asset_version", "1"), enabled=row.enabled,
+            rarity=getattr(row, "rarity", "common"),
+            price_gems=getattr(row, "price_gems", None),
+            unlock_achievement_codes=unlock_codes.get(row.id, []),
             base_url=base_url,
         ) for row in rows]
 
@@ -179,6 +221,9 @@ class ProfileService:
         asset_version: str,
         enabled: bool,
         base_url: str,
+        rarity: str = "common",
+        price_gems: int | None = None,
+        unlock_achievement_codes: list[str] | None = None,
     ) -> OrbSkinSchema:
         skin_key = quote(asset_key, safe="")
         preview_key = quote(preview_asset_key, safe="")
@@ -192,6 +237,9 @@ class ProfileService:
             asset_key=asset_key,
             preview_asset_key=preview_asset_key,
             enabled=enabled,
+            rarity=rarity if rarity in {"common", "rare", "epic", "legendary"} else "common",
+            price_gems=price_gems,
+            unlock_achievement_codes=unlock_achievement_codes or [],
             assets=OrbSkinAssetsSchema(
                 version=asset_version or "1",
                 preview_url=f"{preview_root}/preview.webp{version_query}",
@@ -336,6 +384,7 @@ class ProfileService:
             .returning(db.PlayerStatsModel.current_win_streak)
         )
         winning_streak = (await session.execute(winner_update)).scalar_one_or_none()
+        winner_stats_created = winning_streak is None
         if winning_streak is None:
             session.add(
                 db.PlayerStatsModel(
@@ -344,10 +393,25 @@ class ProfileService:
                     matches_won=1,
                     current_win_streak=1,
                     longest_win_streak=1,
+                    current_ranked_win_streak=1 if game.is_ranked else 0,
                     updated_at=now,
                 )
             )
             winning_streak = 1
+
+        ranked_winning_streak = None
+        if game.is_ranked and not winner_stats_created:
+            ranked_winning_streak = (await session.execute(
+                update(db.PlayerStatsModel)
+                .where(db.PlayerStatsModel.user_id == game.winner_id)
+                .values(
+                    current_ranked_win_streak=db.PlayerStatsModel.current_ranked_win_streak + 1,
+                    updated_at=now,
+                )
+                .returning(db.PlayerStatsModel.current_ranked_win_streak)
+            )).scalar_one()
+        elif game.is_ranked:
+            ranked_winning_streak = 1
 
         loser_update = await session.execute(
             update(db.PlayerStatsModel)
@@ -355,6 +419,9 @@ class ProfileService:
             .values(
                 matches_played=db.PlayerStatsModel.matches_played + 1,
                 current_win_streak=0,
+                current_ranked_win_streak=(
+                    0 if game.is_ranked else db.PlayerStatsModel.current_ranked_win_streak
+                ),
                 updated_at=now,
             )
         )
@@ -364,6 +431,7 @@ class ProfileService:
                     user_id=game.loser_id,
                     matches_played=1,
                     current_win_streak=0,
+                    current_ranked_win_streak=0,
                     updated_at=now,
                 )
             )
@@ -377,6 +445,15 @@ class ProfileService:
                 game.winner_id,
                 WIN_STREAK_ACHIEVEMENT,
                 metadata={"winning_streak": winning_streak, "game_id": str(game.id)},
+                earned_at=now,
+            )
+
+        if ranked_winning_streak is not None and ranked_winning_streak >= 20:
+            await self._award_achievement(
+                session,
+                game.winner_id,
+                RANKED_WIN_STREAK_ACHIEVEMENT,
+                metadata={"ranked_winning_streak": ranked_winning_streak, "game_id": str(game.id)},
                 earned_at=now,
             )
 
@@ -416,6 +493,31 @@ class ProfileService:
                     achievement_metadata=metadata,
                 )
             )
+            await self._grant_achievement_orb_skins(
+                session,
+                user_id,
+                achievement_id=achievement.id,
+            )
+
+    @staticmethod
+    async def _grant_achievement_orb_skins(
+        session: AsyncSession,
+        user_id: uuid.UUID,
+        *,
+        achievement_id: int | None = None,
+    ) -> None:
+        statement = (
+            select(db.AchievementOrbSkinRewardModel.skin_id)
+            .join(db.OrbSkinModel,
+                  db.OrbSkinModel.id == db.AchievementOrbSkinRewardModel.skin_id)
+            .join(db.UserAchievementModel,
+                  db.UserAchievementModel.achievement_id == db.AchievementOrbSkinRewardModel.achievement_id)
+            .where(db.UserAchievementModel.user_id == user_id, db.OrbSkinModel.enabled.is_(True))
+        )
+        if achievement_id is not None:
+            statement = statement.where(db.UserAchievementModel.achievement_id == achievement_id)
+        reward_skin_ids = (await session.execute(statement)).scalars().all()
+        await grant_orb_skins(session, user_id, reward_skin_ids)
 
     @staticmethod
     def _avatar_schema(avatar: db.AvatarModel) -> AvatarSchema:
