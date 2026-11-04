@@ -30,6 +30,7 @@ from app.skins.inventory import grant_orb_skins
 
 logger = logging.getLogger("app.shop")
 RAZORPAY_API = "https://api.razorpay.com/v1"
+RETIRED_SKIN_BUNDLE_IDS = frozenset({"crimson-impact"})
 
 
 class ShopService:
@@ -68,6 +69,8 @@ class ShopService:
         orb_skins = {skin.id: skin for skin in await profile_service.list_orb_skins(session)}
         result: list[SkinBundleSchema] = []
         for bundle, board in rows:
+            if bundle.id in RETIRED_SKIN_BUNDLE_IDS:
+                continue
             orb = orb_skins.get(bundle.orb_skin_id)
             if orb is None or not orb.enabled:
                 continue
@@ -89,7 +92,7 @@ class ShopService:
         bundle_id: str,
     ) -> SkinBundlePurchaseResponse:
         bundle = await session.get(db.SkinBundleModel, bundle_id)
-        if bundle is None or not bundle.enabled:
+        if bundle is None or not bundle.enabled or bundle.id in RETIRED_SKIN_BUNDLE_IDS:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Skin bundle not found")
         board = await session.get(db.BoardSkinModel, bundle.board_skin_id)
         orb = await session.get(db.OrbSkinModel, bundle.orb_skin_id)
