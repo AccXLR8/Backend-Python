@@ -10,7 +10,7 @@ Achievement entries expose `orb_skin_reward_ids`; the catalog exposes `unlock_ac
 
 Gilded Glass remains an achievement reward and is not included in the Gem shop. Earning the achievement adds the orb to the player's inventory; the player can equip it from the skin locker.
 
-Bundled frontend assets live at `public/orb-skins/<asset-key>/`: `preview.webp`, `texture.webp`, `detail.webp`, and `collision.mp3`. Deploy the frontend assets before or alongside the backend migration. The backend asset URLs use the configured `ORB_SKIN_ASSET_BASE_URL` and each skin's asset key/version.
+Bundled frontend assets live at `public/orb-skins/<asset-key>/`: `preview.webp`, `texture.webp`, `detail.webp`, and `collision.mp3`. Void Prism uses `prism-lattice.svg` as its detail layer to render the animated wireframe orb. Deploy frontend assets before or alongside the backend migration; the backend asset URLs use the configured `ORB_SKIN_ASSET_BASE_URL` and each skin's asset key/version.
 
 ## Reference collection
 
@@ -34,6 +34,8 @@ Migration `20261103_000018` seeds the 12-skin Orb Skins collection shown in the 
 Only Classic is granted by default. The shop catalog lists board/orb bundles; a single purchase deducts the bundle price and grants both items. Gilded Glass stays linked to the ranked streak reward and has no Gem price.
 
 New visual assets are bundled by asset key under the frontend's `public/orb-skins/` directory. The default asset base is `https://superkritical.com`; set `ORB_SKIN_ASSET_BASE_URL` on the backend if production uses a different asset host. Until distinct collision sounds are commissioned, each new skin bundles the Classic collision clip. Replace the file for a skin and increment its `asset_version` to publish a distinct sound without changing the API contract.
+
+Migration `20261104_000021` advances the Void Prism and Circuit Pulse asset versions to `2` and updates the Void Matrix board description. The Void Prism detail URL resolves to `prism-lattice.svg`.
 
 ## Configure products
 

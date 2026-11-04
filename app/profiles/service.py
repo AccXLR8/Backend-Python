@@ -260,6 +260,7 @@ class ProfileService:
         version_query = f"?v={version}"
         asset_root = f"{base_url}/orb-skins/{skin_key}"
         preview_root = f"{base_url}/orb-skins/{preview_key}"
+        detail_asset = "prism-lattice.svg" if id == "void-prism" else "detail.webp"
         return OrbSkinSchema(
             id=id,
             name=name,
@@ -273,7 +274,7 @@ class ProfileService:
                 version=asset_version or "1",
                 preview_url=f"{preview_root}/preview.webp{version_query}",
                 texture_url=f"{asset_root}/texture.webp{version_query}",
-                detail_url=f"{asset_root}/detail.webp{version_query}",
+                detail_url=f"{asset_root}/{detail_asset}{version_query}",
                 collision_sound=OrbSkinCollisionSoundSchema(
                     url=f"{asset_root}/collision.mp3{version_query}",
                     mime_type="audio/mpeg",
