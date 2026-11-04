@@ -33,3 +33,28 @@ async def grant_orb_skins(
         [{"user_id": user_id, "skin_id": skin_id} for skin_id in unique_ids]
     )
     await session.execute(statement.on_conflict_do_nothing(index_elements=["user_id", "skin_id"]))
+
+
+async def grant_board_skins(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    skin_ids: Iterable[str],
+) -> None:
+    """Add board skins idempotently, matching orb inventory grant behavior."""
+    unique_ids = sorted(set(skin_ids))
+    if not unique_ids:
+        return
+    dialect = session.get_bind().dialect.name
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    elif dialect == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert
+    else:
+        for skin_id in unique_ids:
+            if await session.get(db.UserBoardSkinModel, {"user_id": user_id, "skin_id": skin_id}) is None:
+                session.add(db.UserBoardSkinModel(user_id=user_id, skin_id=skin_id))
+        return
+    statement = insert(db.UserBoardSkinModel).values(
+        [{"user_id": user_id, "skin_id": skin_id} for skin_id in unique_ids]
+    )
+    await session.execute(statement.on_conflict_do_nothing(index_elements=["user_id", "skin_id"]))

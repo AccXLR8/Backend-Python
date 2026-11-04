@@ -57,6 +57,7 @@ async def update_my_profile(
             username=body.username,
             avatar_id=body.avatar_id,
             equipped_orb_skin_id=body.equipped_orb_skin_id,
+            equipped_board_skin_id=body.equipped_board_skin_id,
             nationality=body.nationality,
         )
         await session.commit()

@@ -120,6 +120,57 @@ class OrbSkinModel(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
+class BoardSkinModel(Base):
+    __tablename__ = "board_skins"
+    __table_args__ = (
+        CheckConstraint("rarity IN ('common', 'rare', 'epic', 'legendary')", name="ck_board_skins_rarity"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(96), nullable=False)
+    rarity: Mapped[str] = mapped_column(String(16), default="common", server_default="common", nullable=False)
+    palette: Mapped[str] = mapped_column(String(32), nullable=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class UserBoardSkinModel(Base):
+    __tablename__ = "user_board_skins"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    skin_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("board_skins.id"), primary_key=True
+    )
+
+
+class UserBoardSkinSelectionModel(Base):
+    __tablename__ = "user_board_skin_selections"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    skin_id: Mapped[str] = mapped_column(String(64), ForeignKey("board_skins.id"), nullable=False)
+
+
+class SkinBundleModel(Base):
+    __tablename__ = "skin_bundles"
+    __table_args__ = (
+        CheckConstraint("price_gems > 0", name="ck_skin_bundles_price_gems_positive"),
+        CheckConstraint("rarity IN ('common', 'rare', 'epic', 'legendary')", name="ck_skin_bundles_rarity"),
+        UniqueConstraint("orb_skin_id", name="uq_skin_bundles_orb_skin"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(96), nullable=False)
+    board_skin_id: Mapped[str] = mapped_column(String(64), ForeignKey("board_skins.id"), nullable=False)
+    orb_skin_id: Mapped[str] = mapped_column(String(64), ForeignKey("orb_skins.id"), nullable=False)
+    rarity: Mapped[str] = mapped_column(String(16), nullable=False)
+    price_gems: Mapped[int] = mapped_column(Integer, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
 class UserOrbSkinModel(Base):
     __tablename__ = "user_orb_skins"
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database.session import get_session
-from app.profiles.schemas import OrbSkinListResponse
+from app.profiles.schemas import BoardSkinListResponse, OrbSkinListResponse
 from app.profiles.service import profile_service
 
 router = APIRouter()
@@ -16,3 +16,8 @@ SessionDependency = Annotated[AsyncSession, Depends(get_session)]
 @router.get("/orbs", response_model=OrbSkinListResponse)
 async def list_orb_skins(session: SessionDependency):
     return OrbSkinListResponse(skins=await profile_service.list_orb_skins(session))
+
+
+@router.get("/boards", response_model=BoardSkinListResponse)
+async def list_board_skins(session: SessionDependency):
+    return BoardSkinListResponse(skins=await profile_service.list_board_skins(session))

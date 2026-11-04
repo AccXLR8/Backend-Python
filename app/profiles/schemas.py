@@ -47,6 +47,8 @@ class ProfileResponse(BaseModel):
     profile_age_days: int
     equipped_orb_skin_id: str = "classic"
     owned_orb_skin_ids: list[str] = Field(default_factory=lambda: ["classic"])
+    equipped_board_skin_id: str = "classic-grid"
+    owned_board_skin_ids: list[str] = Field(default_factory=lambda: ["classic-grid"])
 
 
 class ProfileUpdateRequest(BaseModel):
@@ -55,6 +57,7 @@ class ProfileUpdateRequest(BaseModel):
     username: str | None = Field(default=None, min_length=3, max_length=24)
     avatar_id: int | None = Field(default=None, ge=1)
     equipped_orb_skin_id: str | None = Field(default=None, min_length=1, max_length=64)
+    equipped_board_skin_id: str | None = Field(default=None, min_length=1, max_length=64)
     nationality: str | None = Field(default=None, min_length=2, max_length=8)
 
     @field_validator("nationality")
@@ -121,6 +124,34 @@ class OrbSkinListResponse(BaseModel):
     skins: list[OrbSkinSchema]
 
 
+class BoardSkinSchema(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    rarity: Literal["common", "rare", "epic", "legendary"]
+    palette: str
+    description: str
+    enabled: bool = True
+
+
+class BoardSkinListResponse(BaseModel):
+    skins: list[BoardSkinSchema]
+
+
+class SkinBundleSchema(BaseModel):
+    id: str
+    name: str
+    rarity: Literal["common", "rare", "epic", "legendary"]
+    price_gems: int = Field(ge=1)
+    board_skin: BoardSkinSchema
+    orb_skin: OrbSkinSchema
+
+
+class SkinBundleListResponse(BaseModel):
+    bundles: list[SkinBundleSchema]
+
+
 class GemPackSchema(BaseModel):
     id: str
     name: str
@@ -167,3 +198,12 @@ class OrbSkinGemPurchaseResponse(BaseModel):
     gems_spent: int = Field(ge=1)
     gem_balance: int = Field(ge=0)
     owned_orb_skin_ids: list[str]
+
+
+class SkinBundlePurchaseResponse(BaseModel):
+    status: Literal["purchased"]
+    bundle_id: str
+    gems_spent: int = Field(ge=1)
+    gem_balance: int = Field(ge=0)
+    owned_orb_skin_ids: list[str]
+    owned_board_skin_ids: list[str]

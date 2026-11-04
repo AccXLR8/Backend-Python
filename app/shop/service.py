@@ -16,12 +16,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import get_settings
 from app.database import models as db
 from app.profiles.schemas import (
+    BoardSkinSchema,
     GemPackCheckoutResponse,
     GemPackPurchaseResponse,
     GemPackSchema,
     OrbSkinGemPurchaseResponse,
+    SkinBundlePurchaseResponse,
+    SkinBundleSchema,
     WalletResponse,
 )
+from app.profiles.service import profile_service
 from app.skins.inventory import grant_orb_skins
 
 logger = logging.getLogger("app.shop")
@@ -53,6 +57,103 @@ class ShopService:
             )
             for pack in packs
         ]
+
+    async def list_skin_bundles(self, session: AsyncSession) -> list[SkinBundleSchema]:
+        rows = (await session.execute(
+            select(db.SkinBundleModel, db.BoardSkinModel)
+            .join(db.BoardSkinModel, db.BoardSkinModel.id == db.SkinBundleModel.board_skin_id)
+            .where(db.SkinBundleModel.enabled.is_(True), db.BoardSkinModel.enabled.is_(True))
+            .order_by(db.SkinBundleModel.rarity, db.SkinBundleModel.name)
+        )).all()
+        orb_skins = {skin.id: skin for skin in await profile_service.list_orb_skins(session)}
+        result: list[SkinBundleSchema] = []
+        for bundle, board in rows:
+            orb = orb_skins.get(bundle.orb_skin_id)
+            if orb is None or not orb.enabled:
+                continue
+            result.append(SkinBundleSchema(
+                id=bundle.id,
+                name=bundle.name,
+                rarity=bundle.rarity,
+                price_gems=bundle.price_gems,
+                board_skin=BoardSkinSchema.model_validate(board),
+                orb_skin=orb,
+            ))
+        return result
+
+    async def purchase_skin_bundle(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: uuid.UUID,
+        bundle_id: str,
+    ) -> SkinBundlePurchaseResponse:
+        bundle = await session.get(db.SkinBundleModel, bundle_id)
+        if bundle is None or not bundle.enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Skin bundle not found")
+        board = await session.get(db.BoardSkinModel, bundle.board_skin_id)
+        orb = await session.get(db.OrbSkinModel, bundle.orb_skin_id)
+        if board is None or not board.enabled or orb is None or not orb.enabled:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Skin bundle is unavailable")
+
+        already_owns_orb = await session.get(db.UserOrbSkinModel, {"user_id": user_id, "skin_id": bundle.orb_skin_id})
+        already_owns_board = await session.get(db.UserBoardSkinModel, {"user_id": user_id, "skin_id": bundle.board_skin_id})
+        if already_owns_orb is not None and already_owns_board is not None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "You already own this bundle")
+
+        await self._ensure_wallet(session, user_id)
+        wallet = (await session.execute(
+            select(db.UserGemWalletModel).where(db.UserGemWalletModel.user_id == user_id)
+            .with_for_update().execution_options(populate_existing=True)
+        )).scalar_one()
+        # The wallet lock serializes competing bundle purchases by this player.
+        # Re-read both entitlements after acquiring it to avoid charging twice.
+        already_owns_orb = (await session.execute(
+            select(db.UserOrbSkinModel.skin_id).where(
+                db.UserOrbSkinModel.user_id == user_id,
+                db.UserOrbSkinModel.skin_id == bundle.orb_skin_id,
+            )
+        )).scalar_one_or_none() is not None
+        already_owns_board = (await session.execute(
+            select(db.UserBoardSkinModel.skin_id).where(
+                db.UserBoardSkinModel.user_id == user_id,
+                db.UserBoardSkinModel.skin_id == bundle.board_skin_id,
+            )
+        )).scalar_one_or_none() is not None
+        if already_owns_orb and already_owns_board:
+            raise HTTPException(status.HTTP_409_CONFLICT, "You already own this bundle")
+        if wallet.gem_balance < bundle.price_gems:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"Not enough Gems. This bundle costs {bundle.price_gems}; your balance is {wallet.gem_balance}.",
+            )
+
+        wallet.gem_balance -= bundle.price_gems
+        wallet.updated_at = datetime.now(UTC)
+        session.add(db.WalletTransactionModel(
+            user_id=user_id,
+            amount_delta=-bundle.price_gems,
+            reason="skin_bundle",
+            reference_id=bundle.id,
+        ))
+        await grant_orb_skins(session, user_id, [bundle.orb_skin_id])
+        if not already_owns_board:
+            session.add(db.UserBoardSkinModel(user_id=user_id, skin_id=bundle.board_skin_id))
+        await session.flush()
+        owned_orbs = (await session.execute(
+            select(db.UserOrbSkinModel.skin_id).where(db.UserOrbSkinModel.user_id == user_id)
+        )).scalars().all()
+        owned_boards = (await session.execute(
+            select(db.UserBoardSkinModel.skin_id).where(db.UserBoardSkinModel.user_id == user_id)
+        )).scalars().all()
+        return SkinBundlePurchaseResponse(
+            status="purchased",
+            bundle_id=bundle.id,
+            gems_spent=bundle.price_gems,
+            gem_balance=wallet.gem_balance,
+            owned_orb_skin_ids=sorted(set(owned_orbs) | {"classic"}),
+            owned_board_skin_ids=sorted(set(owned_boards) | {"classic-grid"}),
+        )
 
     async def create_gem_pack_checkout(
         self,

@@ -15,6 +15,8 @@ from app.profiles.schemas import (
     GemPackListResponse,
     GemPackPurchaseResponse,
     OrbSkinGemPurchaseResponse,
+    SkinBundleListResponse,
+    SkinBundlePurchaseResponse,
     WalletResponse,
 )
 from app.shop.service import shop_service
@@ -43,6 +45,11 @@ async def read_wallet(user: CurrentUserDependency, session: SessionDependency):
 @router.get("/gem-packs", response_model=GemPackListResponse)
 async def list_gem_packs(session: SessionDependency):
     return GemPackListResponse(packs=await shop_service.list_gem_packs(session))
+
+
+@router.get("/bundles", response_model=SkinBundleListResponse)
+async def list_skin_bundles(session: SessionDependency):
+    return SkinBundleListResponse(bundles=await shop_service.list_skin_bundles(session))
 
 
 @router.post(
@@ -91,6 +98,21 @@ async def purchase_orb_skin(
         session,
         user_id=_registered_user_id(user),
         skin_id=skin_id,
+    )
+    await session.commit()
+    return result
+
+
+@router.post("/bundles/{bundle_id}/purchase", response_model=SkinBundlePurchaseResponse)
+async def purchase_skin_bundle(
+    bundle_id: str,
+    user: CurrentUserDependency,
+    session: SessionDependency,
+):
+    result = await shop_service.purchase_skin_bundle(
+        session,
+        user_id=_registered_user_id(user),
+        bundle_id=bundle_id,
     )
     await session.commit()
     return result

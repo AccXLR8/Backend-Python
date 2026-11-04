@@ -20,7 +20,7 @@ from app.profiles.schemas import (
     PlayerStatsSchema,
     ProfileResponse,
 )
-from app.skins.inventory import grant_orb_skins
+from app.skins.inventory import grant_board_skins, grant_orb_skins
 
 WIN_STREAK_ACHIEVEMENT = "WIN_STREAK_20"
 RANKED_WIN_STREAK_ACHIEVEMENT = "RANKED_WIN_STREAK_20"
@@ -46,6 +46,8 @@ class ProfileService:
         session.add(db.PlayerStatsModel(user_id=user_id, updated_at=timestamp))
         session.add(db.UserOrbSkinModel(user_id=user_id, skin_id="classic"))
         session.add(db.UserOrbSkinSelectionModel(user_id=user_id, skin_id="classic"))
+        session.add(db.UserBoardSkinModel(user_id=user_id, skin_id="classic-grid"))
+        session.add(db.UserBoardSkinSelectionModel(user_id=user_id, skin_id="classic-grid"))
 
     async def ensure_records(
         self,
@@ -142,11 +144,12 @@ class ProfileService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
         profile, stats = await self.ensure_records(session, user)
         owned, equipped = await self.ensure_orb_skin_records(session, user)
+        owned_boards, equipped_board = await self.ensure_board_skin_records(session, user)
         avatar = await session.get(db.AvatarModel, profile.avatar_id)
         if avatar is None:  # seed data should guarantee this
             raise RuntimeError("Profile avatar does not exist")
         achievements = await self.list_achievements(session, user_id=user.id)
-        return self._profile_response(user, avatar, stats, achievements, owned, equipped)
+        return self._profile_response(user, avatar, stats, achievements, owned, equipped, owned_boards, equipped_board)
 
     async def ensure_orb_skin_records(self, session: AsyncSession, user: db.UserModel) -> tuple[list[str], str]:
         classic = await session.get(db.OrbSkinModel, "classic")
@@ -169,6 +172,32 @@ class ProfileService:
         owned_rows = (await session.execute(select(db.UserOrbSkinModel.skin_id).where(
             db.UserOrbSkinModel.user_id == user.id).order_by(db.UserOrbSkinModel.skin_id))).scalars().all()
         return sorted(set(owned_rows) | {"classic"}), selection.skin_id
+
+    async def ensure_board_skin_records(self, session: AsyncSession, user: db.UserModel) -> tuple[list[str], str]:
+        classic = await session.get(db.BoardSkinModel, "classic-grid")
+        if classic is None:
+            classic = db.BoardSkinModel(
+                id="classic-grid", name="Classic Grid", rarity="common", palette="classic",
+                description="A clean, familiar arena grid.", enabled=True,
+            )
+            session.add(classic)
+            await session.flush()
+        owned = await session.get(db.UserBoardSkinModel, {"user_id": user.id, "skin_id": "classic-grid"})
+        if owned is None:
+            session.add(db.UserBoardSkinModel(user_id=user.id, skin_id="classic-grid"))
+        selection = await session.get(db.UserBoardSkinSelectionModel, user.id)
+        if selection is None:
+            selection = db.UserBoardSkinSelectionModel(user_id=user.id, skin_id="classic-grid")
+            session.add(selection)
+        await session.flush()
+        owned_rows = (await session.execute(select(db.UserBoardSkinModel.skin_id).where(
+            db.UserBoardSkinModel.user_id == user.id).order_by(db.UserBoardSkinModel.skin_id))).scalars().all()
+        return sorted(set(owned_rows) | {"classic-grid"}), selection.skin_id
+
+    async def list_board_skins(self, session: AsyncSession) -> list[db.BoardSkinModel]:
+        return (await session.execute(
+            select(db.BoardSkinModel).where(db.BoardSkinModel.enabled.is_(True)).order_by(db.BoardSkinModel.id)
+        )).scalars().all()
 
     async def list_orb_skins(self, session: AsyncSession) -> list[OrbSkinSchema]:
         rows = (await session.execute(select(db.OrbSkinModel).where(db.OrbSkinModel.enabled.is_(True))
@@ -277,6 +306,7 @@ class ProfileService:
         username: str | None,
         avatar_id: int | None,
         equipped_orb_skin_id: str | None = None,
+        equipped_board_skin_id: str | None = None,
         nationality: str | None = None,
     ) -> ProfileResponse:
         user = await session.get(db.UserModel, user_id)
@@ -284,6 +314,7 @@ class ProfileService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
         profile, _ = await self.ensure_records(session, user)
         owned_skins, _ = await self.ensure_orb_skin_records(session, user)
+        owned_board_skins, _ = await self.ensure_board_skin_records(session, user)
 
         if username is not None and username != user.username:
             if username.lower() != user.username.lower():
@@ -320,6 +351,13 @@ class ProfileService:
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Orb skin is not available")
             selection = await session.get(db.UserOrbSkinSelectionModel, user.id)
             selection.skin_id = equipped_orb_skin_id
+
+        if equipped_board_skin_id is not None:
+            board_skin = await session.get(db.BoardSkinModel, equipped_board_skin_id)
+            if board_skin is None or not board_skin.enabled or equipped_board_skin_id not in owned_board_skins:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Board skin is not available")
+            selection = await session.get(db.UserBoardSkinSelectionModel, user.id)
+            selection.skin_id = equipped_board_skin_id
 
         profile.updated_at = datetime.now(UTC)
         await session.flush()
@@ -518,6 +556,10 @@ class ProfileService:
             statement = statement.where(db.UserAchievementModel.achievement_id == achievement_id)
         reward_skin_ids = (await session.execute(statement)).scalars().all()
         await grant_orb_skins(session, user_id, reward_skin_ids)
+        # The ranked-streak reward is also a complete visual bundle: the
+        # Gilded Glass orb is paired with Solar Grid for simultaneous equip.
+        if "auric-comet" in reward_skin_ids:
+            await grant_board_skins(session, user_id, ["solar-grid"])
 
     @staticmethod
     def _avatar_schema(avatar: db.AvatarModel) -> AvatarSchema:
@@ -536,6 +578,8 @@ class ProfileService:
         achievements: list[AchievementSchema],
         owned_orb_skin_ids: list[str],
         equipped_orb_skin_id: str,
+        owned_board_skin_ids: list[str],
+        equipped_board_skin_id: str,
     ) -> ProfileResponse:
         created_at = user.created_at
         if created_at.tzinfo is None:
@@ -564,6 +608,8 @@ class ProfileService:
             profile_age_days=age_days,
             equipped_orb_skin_id=equipped_orb_skin_id,
             owned_orb_skin_ids=owned_orb_skin_ids,
+            equipped_board_skin_id=equipped_board_skin_id,
+            owned_board_skin_ids=owned_board_skin_ids,
         )
 
 

@@ -1618,6 +1618,27 @@
         }
       }
     },
+    "/api/skins/boards": {
+      "get": {
+        "tags": [
+          "skins"
+        ],
+        "summary": "List Board Skins",
+        "operationId": "list_board_skins_api_skins_boards_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BoardSkinListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/shop/wallet": {
       "get": {
         "tags": [
@@ -1681,6 +1702,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GemPackListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shop/bundles": {
+      "get": {
+        "tags": [
+          "shop"
+        ],
+        "summary": "List Skin Bundles",
+        "operationId": "list_skin_bundles_api_shop_bundles_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkinBundleListResponse"
                 }
               }
             }
@@ -1846,6 +1888,64 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OrbSkinGemPurchaseResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shop/bundles/{bundle_id}/purchase": {
+      "post": {
+        "tags": [
+          "shop"
+        ],
+        "summary": "Purchase Skin Bundle",
+        "operationId": "purchase_skin_bundle_api_shop_bundles__bundle_id__purchase_post",
+        "parameters": [
+          {
+            "name": "bundle_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Bundle Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkinBundlePurchaseResponse"
                 }
               }
             }
@@ -2071,6 +2171,66 @@
           "image_url"
         ],
         "title": "AvatarSchema"
+      },
+      "BoardSkinListResponse": {
+        "properties": {
+          "skins": {
+            "items": {
+              "$ref": "#/components/schemas/BoardSkinSchema"
+            },
+            "type": "array",
+            "title": "Skins"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skins"
+        ],
+        "title": "BoardSkinListResponse"
+      },
+      "BoardSkinSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "rarity": {
+            "type": "string",
+            "enum": [
+              "common",
+              "rare",
+              "epic",
+              "legendary"
+            ],
+            "title": "Rarity"
+          },
+          "palette": {
+            "type": "string",
+            "title": "Palette"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "rarity",
+          "palette",
+          "description"
+        ],
+        "title": "BoardSkinSchema"
       },
       "ChangePasswordRequest": {
         "properties": {
@@ -2904,6 +3064,18 @@
             },
             "type": "array",
             "title": "Owned Orb Skin Ids"
+          },
+          "equipped_board_skin_id": {
+            "type": "string",
+            "title": "Equipped Board Skin Id",
+            "default": "classic-grid"
+          },
+          "owned_board_skin_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Owned Board Skin Ids"
           }
         },
         "type": "object",
@@ -2957,6 +3129,19 @@
               }
             ],
             "title": "Equipped Orb Skin Id"
+          },
+          "equipped_board_skin_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Equipped Board Skin Id"
           },
           "nationality": {
             "anyOf": [
@@ -3019,6 +3204,112 @@
           "confirm_password"
         ],
         "title": "RegisterRequest"
+      },
+      "SkinBundleListResponse": {
+        "properties": {
+          "bundles": {
+            "items": {
+              "$ref": "#/components/schemas/SkinBundleSchema"
+            },
+            "type": "array",
+            "title": "Bundles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bundles"
+        ],
+        "title": "SkinBundleListResponse"
+      },
+      "SkinBundlePurchaseResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "purchased",
+            "title": "Status"
+          },
+          "bundle_id": {
+            "type": "string",
+            "title": "Bundle Id"
+          },
+          "gems_spent": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Gems Spent"
+          },
+          "gem_balance": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Gem Balance"
+          },
+          "owned_orb_skin_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Owned Orb Skin Ids"
+          },
+          "owned_board_skin_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Owned Board Skin Ids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "bundle_id",
+          "gems_spent",
+          "gem_balance",
+          "owned_orb_skin_ids",
+          "owned_board_skin_ids"
+        ],
+        "title": "SkinBundlePurchaseResponse"
+      },
+      "SkinBundleSchema": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "rarity": {
+            "type": "string",
+            "enum": [
+              "common",
+              "rare",
+              "epic",
+              "legendary"
+            ],
+            "title": "Rarity"
+          },
+          "price_gems": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Price Gems"
+          },
+          "board_skin": {
+            "$ref": "#/components/schemas/BoardSkinSchema"
+          },
+          "orb_skin": {
+            "$ref": "#/components/schemas/OrbSkinSchema"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "rarity",
+          "price_gems",
+          "board_skin",
+          "orb_skin"
+        ],
+        "title": "SkinBundleSchema"
       },
       "TokenResponse": {
         "properties": {
