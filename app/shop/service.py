@@ -25,14 +25,12 @@ from app.profiles.schemas import (
     SkinBundleSchema,
     WalletResponse,
 )
+from app.skins.catalog import RETIRED_ORB_SKIN_IDS, RETIRED_SKIN_BUNDLE_IDS
 from app.profiles.service import profile_service
 from app.skins.inventory import grant_orb_skins
 
 logger = logging.getLogger("app.shop")
 RAZORPAY_API = "https://api.razorpay.com/v1"
-RETIRED_SKIN_BUNDLE_IDS = frozenset({"crimson-impact"})
-
-
 class ShopService:
     """Keeps wallet changes and skin ownership server-authoritative and atomic."""
 
@@ -69,7 +67,7 @@ class ShopService:
         orb_skins = {skin.id: skin for skin in await profile_service.list_orb_skins(session)}
         result: list[SkinBundleSchema] = []
         for bundle, board in rows:
-            if bundle.id in RETIRED_SKIN_BUNDLE_IDS:
+            if bundle.id in RETIRED_SKIN_BUNDLE_IDS or bundle.orb_skin_id in RETIRED_ORB_SKIN_IDS:
                 continue
             orb = orb_skins.get(bundle.orb_skin_id)
             if orb is None or not orb.enabled:
@@ -92,7 +90,8 @@ class ShopService:
         bundle_id: str,
     ) -> SkinBundlePurchaseResponse:
         bundle = await session.get(db.SkinBundleModel, bundle_id)
-        if bundle is None or not bundle.enabled or bundle.id in RETIRED_SKIN_BUNDLE_IDS:
+        if (bundle is None or not bundle.enabled or bundle.id in RETIRED_SKIN_BUNDLE_IDS
+                or bundle.orb_skin_id in RETIRED_ORB_SKIN_IDS):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Skin bundle not found")
         board = await session.get(db.BoardSkinModel, bundle.board_skin_id)
         orb = await session.get(db.OrbSkinModel, bundle.orb_skin_id)
@@ -144,7 +143,10 @@ class ShopService:
             session.add(db.UserBoardSkinModel(user_id=user_id, skin_id=bundle.board_skin_id))
         await session.flush()
         owned_orbs = (await session.execute(
-            select(db.UserOrbSkinModel.skin_id).where(db.UserOrbSkinModel.user_id == user_id)
+            select(db.UserOrbSkinModel.skin_id).where(
+                db.UserOrbSkinModel.user_id == user_id,
+                db.UserOrbSkinModel.skin_id.notin_(RETIRED_ORB_SKIN_IDS),
+            )
         )).scalars().all()
         owned_boards = (await session.execute(
             select(db.UserBoardSkinModel.skin_id).where(db.UserBoardSkinModel.user_id == user_id)
@@ -314,7 +316,7 @@ class ShopService:
         skin_id: str,
     ) -> OrbSkinGemPurchaseResponse:
         skin = await session.get(db.OrbSkinModel, skin_id)
-        if skin is None or not skin.enabled:
+        if skin is None or not skin.enabled or skin_id in RETIRED_ORB_SKIN_IDS:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Orb skin not found")
         if skin.price_gems is None:
             raise HTTPException(status.HTTP_409_CONFLICT, "This orb skin is not for sale")
@@ -354,7 +356,10 @@ class ShopService:
         owned = (
             await session.execute(
                 select(db.UserOrbSkinModel.skin_id)
-                .where(db.UserOrbSkinModel.user_id == user_id)
+                .where(
+                    db.UserOrbSkinModel.user_id == user_id,
+                    db.UserOrbSkinModel.skin_id.notin_(RETIRED_ORB_SKIN_IDS),
+                )
                 .order_by(db.UserOrbSkinModel.skin_id)
             )
         ).scalars().all()

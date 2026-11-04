@@ -10,32 +10,36 @@ Achievement entries expose `orb_skin_reward_ids`; the catalog exposes `unlock_ac
 
 Gilded Glass remains an achievement reward and is not included in the Gem shop. Earning the achievement adds the orb to the player's inventory; the player can equip it from the skin locker.
 
-Bundled frontend assets live at `public/orb-skins/<asset-key>/`: `preview.webp`, `texture.webp`, `detail.webp`, and `collision.mp3`. Void Prism uses `prism-lattice.svg` as its detail layer to render the animated wireframe orb. Deploy frontend assets before or alongside the backend migration; the backend asset URLs use the configured `ORB_SKIN_ASSET_BASE_URL` and each skin's asset key/version.
+Bundled frontend assets live at `public/orb-skins/<asset-key>/`: `preview.webp`, `texture.webp`, `detail.webp`, and `collision.mp3`. Void Prism uses `prism-lattice.svg`, Cosmic Core uses `cosmic-nebula.svg`, and Cool Blue Glass uses `water-ripples.svg` as their detail layers. Deploy frontend assets before or alongside the backend migration; the backend asset URLs use the configured `ORB_SKIN_ASSET_BASE_URL` and each skin's asset key/version.
 
 ## Reference collection
 
-Migration `20261103_000018` seeds the 12-skin Orb Skins collection shown in the frontend locker. `classic` remains free and is assigned to every account. Migration `20261104_000019` seeds paired board/orb offers with draft Gem prices stored on `skin_bundles.price_gems`.
+Migration `20261103_000018` seeds the original Orb Skins collection. `classic` remains free and is assigned to every account. Migration `20261104_000019` seeds paired board/orb offers with draft Gem prices stored on `skin_bundles.price_gems`.
 
 | Rarity | Orb skin | Bundle status |
 | --- | --- | ---: |
 | Legendary | Gilded Glass | 20 consecutive ranked wins; not purchasable |
-| Legendary | Cosmic Core | Paired with Void Matrix |
+| Legendary | Cosmic Core | Paired with Cosmic Grid |
 | Epic | Crimson Glass | Paired with Crimson Grid |
 | Epic | Void Prism | Paired with Void Matrix |
 | Epic | Neon Circuit | Paired with Neon Circuit |
-| Rare | Cool Blue Glass | Paired with Ocean Grid |
+| Rare | Cool Blue Glass | Paired with Ocean Glass Grid |
 | Rare | Frosted Core | Paired with Frost Grid |
 | Rare | Electric Halo | Paired with Solar Grid |
 | Common | Classic Orb | Free; included in every inventory |
-| Common | Matte Pearl | Paired with Carbon Grid |
 | Common | Graphite | Paired with Carbon Grid |
-| Common | Ivory Glow | Paired with Solar Grid |
 
 Only Classic is granted by default. The shop catalog lists board/orb bundles; a single purchase deducts the bundle price and grants both items. Gilded Glass stays linked to the ranked streak reward and has no Gem price.
 
 New visual assets are bundled by asset key under the frontend's `public/orb-skins/` directory. The default asset base is `https://superkritical.com`; set `ORB_SKIN_ASSET_BASE_URL` on the backend if production uses a different asset host. Until distinct collision sounds are commissioned, each new skin bundles the Classic collision clip. Replace the file for a skin and increment its `asset_version` to publish a distinct sound without changing the API contract.
 
 Migration `20261104_000021` advances the Void Prism and Circuit Pulse asset versions to `2` and updates the Void Matrix board description. The Void Prism detail URL resolves to `prism-lattice.svg`.
+
+Migration `20261104_000022` separates Cosmic Void onto the Cosmic Grid board, grants that board to existing Cosmic Core owners, and advances its orb asset version to `2`.
+
+Migration `20261104_000023` renames Ocean Grid to Ocean Glass Grid, updates its water-glass description, and advances Cool Blue Glass to asset version `2`. The orb detail URL resolves to `water-ripples.svg`.
+
+Migration `20261104_000024` retires Pearl Carbon and Ivory Glow from the shop and orb catalog, removes their ownership grants, and returns affected equipped orbs to Classic. Purchase ledger entries remain for audit history.
 
 ## Configure products
 

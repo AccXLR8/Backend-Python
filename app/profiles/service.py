@@ -20,6 +20,7 @@ from app.profiles.schemas import (
     PlayerStatsSchema,
     ProfileResponse,
 )
+from app.skins.catalog import RETIRED_ORB_SKIN_IDS
 from app.skins.inventory import grant_board_skins, grant_orb_skins
 
 WIN_STREAK_ACHIEVEMENT = "WIN_STREAK_20"
@@ -105,7 +106,10 @@ class ProfileService:
                     db.OrbSkinModel,
                     db.OrbSkinModel.id == db.AchievementOrbSkinRewardModel.skin_id,
                 )
-                .where(db.OrbSkinModel.enabled.is_(True))
+                .where(
+                    db.OrbSkinModel.enabled.is_(True),
+                    db.OrbSkinModel.id.notin_(RETIRED_ORB_SKIN_IDS),
+                )
                 .order_by(db.AchievementOrbSkinRewardModel.achievement_id,
                           db.AchievementOrbSkinRewardModel.skin_id)
             )
@@ -165,12 +169,16 @@ class ProfileService:
         if selection is None:
             selection = db.UserOrbSkinSelectionModel(user_id=user.id, skin_id="classic")
             session.add(selection)
+        elif selection.skin_id in RETIRED_ORB_SKIN_IDS:
+            selection.skin_id = "classic"
         await session.flush()
         # Also reconcile rewards if a mapping was added after an achievement was earned.
         await self._grant_achievement_orb_skins(session, user.id)
         await session.flush()
         owned_rows = (await session.execute(select(db.UserOrbSkinModel.skin_id).where(
-            db.UserOrbSkinModel.user_id == user.id).order_by(db.UserOrbSkinModel.skin_id))).scalars().all()
+            db.UserOrbSkinModel.user_id == user.id,
+            db.UserOrbSkinModel.skin_id.notin_(RETIRED_ORB_SKIN_IDS),
+        ).order_by(db.UserOrbSkinModel.skin_id))).scalars().all()
         return sorted(set(owned_rows) | {"classic"}), selection.skin_id
 
     async def ensure_board_skin_records(self, session: AsyncSession, user: db.UserModel) -> tuple[list[str], str]:
@@ -200,8 +208,10 @@ class ProfileService:
         )).scalars().all()
 
     async def list_orb_skins(self, session: AsyncSession) -> list[OrbSkinSchema]:
-        rows = (await session.execute(select(db.OrbSkinModel).where(db.OrbSkinModel.enabled.is_(True))
-                                      .order_by(db.OrbSkinModel.id))).scalars().all()
+        rows = (await session.execute(select(db.OrbSkinModel).where(
+            db.OrbSkinModel.enabled.is_(True),
+            db.OrbSkinModel.id.notin_(RETIRED_ORB_SKIN_IDS),
+        ).order_by(db.OrbSkinModel.id))).scalars().all()
         reward_rows = (
             await session.execute(
                 select(db.AchievementOrbSkinRewardModel.skin_id, db.AchievementModel.code)
@@ -260,7 +270,11 @@ class ProfileService:
         version_query = f"?v={version}"
         asset_root = f"{base_url}/orb-skins/{skin_key}"
         preview_root = f"{base_url}/orb-skins/{preview_key}"
-        detail_asset = "prism-lattice.svg" if id == "void-prism" else "detail.webp"
+        detail_asset = {
+            "void-prism": "prism-lattice.svg",
+            "cosmic-core": "cosmic-nebula.svg",
+            "cool-blue-glass": "water-ripples.svg",
+        }.get(id, "detail.webp")
         return OrbSkinSchema(
             id=id,
             name=name,
@@ -348,7 +362,8 @@ class ProfileService:
 
         if equipped_orb_skin_id is not None:
             skin = await session.get(db.OrbSkinModel, equipped_orb_skin_id)
-            if skin is None or not skin.enabled or equipped_orb_skin_id not in owned_skins:
+            if (skin is None or not skin.enabled or equipped_orb_skin_id in RETIRED_ORB_SKIN_IDS
+                    or equipped_orb_skin_id not in owned_skins):
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Orb skin is not available")
             selection = await session.get(db.UserOrbSkinSelectionModel, user.id)
             selection.skin_id = equipped_orb_skin_id
@@ -551,7 +566,11 @@ class ProfileService:
                   db.OrbSkinModel.id == db.AchievementOrbSkinRewardModel.skin_id)
             .join(db.UserAchievementModel,
                   db.UserAchievementModel.achievement_id == db.AchievementOrbSkinRewardModel.achievement_id)
-            .where(db.UserAchievementModel.user_id == user_id, db.OrbSkinModel.enabled.is_(True))
+            .where(
+                db.UserAchievementModel.user_id == user_id,
+                db.OrbSkinModel.enabled.is_(True),
+                db.OrbSkinModel.id.notin_(RETIRED_ORB_SKIN_IDS),
+            )
         )
         if achievement_id is not None:
             statement = statement.where(db.UserAchievementModel.achievement_id == achievement_id)
