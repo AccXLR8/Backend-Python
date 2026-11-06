@@ -273,7 +273,6 @@ class GameService:
                         final_state_payload,
                         reaction_payload,
                         outcome_payload,
-                        payload_bytes,
                         timeline_steps,
                     ) = await asyncio.to_thread(
                         self._apply_move_payloads,
@@ -319,10 +318,6 @@ class GameService:
                         next_player = int(final_players[current_index]["id"])
                     else:
                         next_player = 1 - player_slot
-
-                final_state_size = len(json.dumps(final_state_payload)) if final_state_payload else 0
-                reaction_size = len(json.dumps(reaction_payload)) if reaction_payload else 0
-                latest_state_size = len(json.dumps(game.latest_state or {}))
 
                 game.turn_number = int(final_state_payload.get("turn_number", game.turn_number + 1))
                 game.current_player_slot = next_player
@@ -410,12 +405,8 @@ class GameService:
                         "sequence": sequence,
                         "player_slot": player_slot,
                         "cell": cell,
-                        "final_state_bytes": final_state_size,
-                        "reaction_bytes": reaction_size,
-                        "latest_state_bytes": latest_state_size,
                         "rss_kb": rss_kb,
                         "status": game.status.value,
-                        "engine_payload_bytes": payload_bytes,
                         "timeline_steps": timeline_steps,
                     },
                 )
@@ -557,11 +548,22 @@ class GameService:
             .with_for_update(skip_locked=True)
         )
         games = (await session.execute(stmt)).scalars().all()
+        if not games:
+            return []
+
+        game_ids = [game.id for game in games]
+        participant_rows = (await session.execute(
+            select(db.GameParticipantModel).where(db.GameParticipantModel.game_id.in_(game_ids))
+        )).scalars().all()
+        participants_by_game: dict[uuid.UUID, list[db.GameParticipantModel]] = {
+            game_id: [] for game_id in game_ids
+        }
+        for participant in participant_rows:
+            participants_by_game[participant.game_id].append(participant)
+
         expired: list[tuple[uuid.UUID, GameEvent]] = []
         for game in games:
-            participants = (await session.execute(
-                select(db.GameParticipantModel).where(db.GameParticipantModel.game_id == game.id)
-            )).scalars().all()
+            participants = participants_by_game[game.id]
             participant_lookup = {participant.player_slot: participant for participant in participants}
             slot = game.current_player_slot
             clock = participant_lookup.get(slot) if slot is not None else None
@@ -666,17 +668,7 @@ class GameService:
 
     def _create_new_game_state_payload(self, width: int, height: int, players: list[int]) -> dict[str, Any]:
         state = self.engine.new_game(width=width, height=height, players=list(players))
-        payload = self._game_state_to_payload(state)
-        logger.info(
-            "engine.new_game_state",
-            extra={
-                "width": width,
-                "height": height,
-                "players": list(players),
-                "payload_bytes": len(json.dumps(payload)),
-            },
-        )
-        return payload
+        return self._game_state_to_payload(state)
 
     def _apply_move_payloads(
         self,
@@ -684,30 +676,19 @@ class GameService:
         player_slot: int,
         row: int,
         col: int,
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], int, int]:
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], int]:
         cr_state = self._game_state_from_payload(state_payload)
         move = self.move_cls(row=row, col=col)
         result = self.engine.apply_move(cr_state, player=player_slot, mv=move)
         final_state = self._game_state_to_payload(result.final_state)
         reaction = self._to_plain(getattr(result, "timeline", None)) or {}
         outcome = self._to_plain(getattr(result, "outcome", None)) or {}
-        payload_bytes = len(json.dumps({"final_state": final_state, "timeline": reaction, "outcome": outcome}))
         timeline_steps = 0
         if isinstance(reaction, dict):
             steps = reaction.get("steps")
             if isinstance(steps, list):
                 timeline_steps = len(steps)
-        logger.info(
-            "engine.apply_move",
-            extra={
-                "player_slot": player_slot,
-                "move_row": row,
-                "move_col": col,
-                "payload_bytes": payload_bytes,
-                "timeline_steps": timeline_steps,
-            },
-        )
-        return final_state, reaction, outcome, payload_bytes, timeline_steps
+        return final_state, reaction, outcome, timeline_steps
 
     def _map_engine_error(self, error: Exception):
         if self.illegal_move_cls and isinstance(error, self.illegal_move_cls):

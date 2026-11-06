@@ -216,9 +216,13 @@ class MoveRepository:
         row = result.scalar_one_or_none()
         return row or 0
 
-    async def list_for_game(self, game_id: uuid.UUID) -> Sequence[db.MoveModel]:
+    async def list_for_game(
+        self, game_id: uuid.UUID, *, after_sequence: int = 0
+    ) -> Sequence[db.MoveModel]:
         result = await self.session.execute(
-            select(db.MoveModel).where(db.MoveModel.game_id == game_id).order_by(db.MoveModel.sequence)
+            select(db.MoveModel)
+            .where(db.MoveModel.game_id == game_id, db.MoveModel.sequence > after_sequence)
+            .order_by(db.MoveModel.sequence)
         )
         return result.scalars().all()
 
@@ -242,6 +246,15 @@ class GameEventRepository:
             await self.session.flush()
         return event
 
-    async def list_events(self, game_id: uuid.UUID) -> Sequence[db.GameEventModel]:
-        result = await self.session.execute(select(db.GameEventModel).where(db.GameEventModel.game_id == game_id).order_by(db.GameEventModel.sequence))
+    async def list_events(
+        self, game_id: uuid.UUID, *, after_sequence: int = 0
+    ) -> Sequence[db.GameEventModel]:
+        result = await self.session.execute(
+            select(db.GameEventModel)
+            .where(
+                db.GameEventModel.game_id == game_id,
+                db.GameEventModel.sequence > after_sequence,
+            )
+            .order_by(db.GameEventModel.sequence)
+        )
         return result.scalars().all()

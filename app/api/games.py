@@ -6,7 +6,7 @@ import json
 import secrets
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -154,6 +154,7 @@ async def create_websocket_ticket(
 @router.get("/{game_id}/history", response_model=GameHistoryResponse)
 async def game_history(
     game_id: uuid.UUID,
+    after_sequence: int = Query(default=0, ge=0),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -164,9 +165,9 @@ async def game_history(
     await _require_game_participant(session, game_id, user)
 
     move_repo = MoveRepository(session)
-    move_rows = await move_repo.list_for_game(game_id)
+    move_rows = await move_repo.list_for_game(game_id, after_sequence=after_sequence)
     event_repo = GameEventRepository(session)
-    events = await event_repo.list_events(game_id)
+    events = await event_repo.list_events(game_id, after_sequence=after_sequence)
     events_by_sequence = {event.sequence: event.payload for event in events}
 
     serialized_moves = []

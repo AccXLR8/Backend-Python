@@ -388,18 +388,8 @@ class ProfileService:
         if chain_length <= 0:
             return
         now = datetime.now(UTC)
-        result = await session.execute(
-            update(db.PlayerStatsModel)
-            .where(db.PlayerStatsModel.user_id == user_id)
-            .values(
-                longest_chain=case(
-                    (db.PlayerStatsModel.longest_chain < chain_length, chain_length),
-                    else_=db.PlayerStatsModel.longest_chain,
-                ),
-                updated_at=now,
-            )
-        )
-        if result.rowcount == 0:
+        stats = await session.get(db.PlayerStatsModel, user_id)
+        if stats is None:
             session.add(
                 db.PlayerStatsModel(
                     user_id=user_id,
@@ -407,6 +397,19 @@ class ProfileService:
                     updated_at=now,
                 )
             )
+        elif chain_length > stats.longest_chain:
+            result = await session.execute(
+                update(db.PlayerStatsModel)
+                .where(
+                    db.PlayerStatsModel.user_id == user_id,
+                    db.PlayerStatsModel.longest_chain < chain_length,
+                )
+                .values(longest_chain=chain_length, updated_at=now)
+                .execution_options(synchronize_session=False)
+            )
+            if not result.rowcount:
+                # Another game may have recorded a longer chain after our read.
+                await session.refresh(stats)
 
     async def apply_finished_game(
         self,
